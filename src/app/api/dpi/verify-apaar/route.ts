@@ -1,10 +1,11 @@
 import { NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabase";
+import { registerApaarStudent } from "@/lib/apaar-registration";
 
 export async function POST(request: Request) {
   try {
     const body = await request.json();
-    const { apaar_id, otp } = body;
+    const { apaar_id, otp, auto_provision, student_name } = body;
 
     // Validate request parameters
     if (!apaar_id || !otp) {
@@ -30,7 +31,7 @@ export async function POST(request: Request) {
     }
 
     // Fetch student profile from Supabase
-    const { data: student, error: profileError } = await supabaseAdmin
+    const { data: fetchedStudent, error: profileError } = await supabaseAdmin
       .from("apaar_profiles")
       .select("*")
       .eq("apaar_id", String(apaar_id))
@@ -47,15 +48,42 @@ export async function POST(request: Request) {
       );
     }
 
+    let student = fetchedStudent;
+
     if (!student) {
-      return NextResponse.json(
-        {
-          success: false,
-          status: "NOT_FOUND",
-          error: `No student profile found for APAAR ID: '${apaar_id}'.`,
-        },
-        { status: 404 }
-      );
+      if (auto_provision === true && /^\d{12}$/.test(String(apaar_id).trim())) {
+        try {
+          const registered = await registerApaarStudent({
+            full_name: student_name || `DigiLocker Scholar (${String(apaar_id).slice(-4)})`,
+            custom_apaar_id: String(apaar_id).trim(),
+            dob: "2005-04-18",
+            gender: "Male",
+            current_aicte_code: "1-10000001",
+          });
+          student = registered.student_profile;
+        } catch (regErr: any) {
+          console.error("Auto-provision error in verify-apaar:", regErr);
+          return NextResponse.json(
+            {
+              success: false,
+              status: "NOT_FOUND",
+              error: `Student profile not found, and auto-provision failed: ${regErr.message}`,
+              can_auto_provision: true,
+            },
+            { status: 404 }
+          );
+        }
+      } else {
+        return NextResponse.json(
+          {
+            success: false,
+            status: "NOT_FOUND",
+            error: `No student profile found for APAAR ID: '${apaar_id}'.`,
+            can_auto_provision: /^\d{12}$/.test(String(apaar_id).trim()),
+          },
+          { status: 404 }
+        );
+      }
     }
 
     // Fetch academic credits, activity certificates, institution, and consents concurrently

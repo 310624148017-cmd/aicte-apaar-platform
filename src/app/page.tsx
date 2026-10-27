@@ -11,6 +11,7 @@ import {
   ShieldCheck,
   CheckCircle2,
   XCircle,
+  Clock,
   QrCode,
   FileText,
   Upload,
@@ -444,27 +445,67 @@ export default function CommandCenter() {
   } | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
+  // Zero-Dead-End Mode & Registration State
+  const [autoProvisionEnabled, setAutoProvisionEnabled] = useState(false);
+  const [unregisteredApaarPrompt, setUnregisteredApaarPrompt] = useState<{
+    apaarId: string;
+    canAutoProvision: boolean;
+  } | null>(null);
+
+  const [showRegisterModal, setShowRegisterModal] = useState(false);
+  const [regFullName, setRegFullName] = useState("");
+  const [regDob, setRegDob] = useState("2005-06-15");
+  const [regGender, setRegGender] = useState("Male");
+  const [regAadhaarLast4, setRegAadhaarLast4] = useState("8821");
+  const [regUdisePen, setRegUdisePen] = useState("");
+  const [regClass10, setRegClass10] = useState("92.4");
+  const [regClass12, setRegClass12] = useState("89.8");
+  const [regAicteCode, setRegAicteCode] = useState("1-10000001");
+  const [regCustomApaar, setRegCustomApaar] = useState("");
+  const [isMinting, setIsMinting] = useState(false);
+  const [mintStage, setMintStage] = useState(0); // 0=idle, 1=UIDAI, 2=UDISE+, 3=ABC Mint
+
   // Auto-Login Student on Mount
   useEffect(() => {
     handleStudentLogin("482910394812", "123456", false);
   }, []);
 
-  async function handleStudentLogin(apaarId = studentApaarInput, otp = studentOtpInput, showToast = true) {
+  async function handleStudentLogin(
+    apaarId = studentApaarInput,
+    otp = studentOtpInput,
+    showToast = true,
+    forceAutoProvision = false
+  ) {
     try {
       setStudentLoading(true);
       setStudentApaarInput(apaarId);
       setStudentOtpInput(otp);
+      setUnregisteredApaarPrompt(null);
+
+      const shouldAuto = forceAutoProvision || autoProvisionEnabled;
 
       const res = await fetch("/api/dpi/verify-apaar", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ apaar_id: apaarId, otp }),
+        body: JSON.stringify({
+          apaar_id: apaarId,
+          otp,
+          auto_provision: shouldAuto,
+          student_name: `Verified Scholar (${String(apaarId).slice(-4)})`,
+        }),
       });
       const json = await res.json();
       if (!res.ok) {
+        if (json.status === "NOT_FOUND") {
+          setUnregisteredApaarPrompt({
+            apaarId,
+            canAutoProvision: Boolean(json.can_auto_provision),
+          });
+        }
         if (showToast) notify(json.error || "Login failed", "error");
       } else {
         setStudentData(json.data);
+        setUnregisteredApaarPrompt(null);
         if (showToast) notify(`APAAR Wallet Authenticated for ${json.data?.student_profile?.full_name}`, "success");
         logTelemetry("AUTH", `UIDAI eKYC Verified for ${apaarId} (${json.data?.student_profile?.full_name})`);
       }
@@ -472,6 +513,66 @@ export default function CommandCenter() {
       if (showToast) notify(err.message || "Failed to fetch student profile", "error");
     } finally {
       setStudentLoading(false);
+    }
+  }
+
+  async function handleRegisterSubmit(e: React.FormEvent) {
+    e.preventDefault();
+    if (!regFullName.trim()) {
+      notify("Please enter Student Full Name", "error");
+      return;
+    }
+
+    try {
+      setIsMinting(true);
+      setMintStage(1);
+      await new Promise((r) => setTimeout(r, 500));
+
+      setMintStage(2);
+      await new Promise((r) => setTimeout(r, 500));
+
+      setMintStage(3);
+      await new Promise((r) => setTimeout(r, 500));
+
+      const res = await fetch("/api/dpi/register-apaar", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          full_name: regFullName.trim(),
+          dob: regDob,
+          gender: regGender,
+          aadhaar_last_4: regAadhaarLast4,
+          udise_pen: regUdisePen.trim() || undefined,
+          class_10_percentage: Number(regClass10) || 90.0,
+          class_12_percentage: Number(regClass12) || 88.0,
+          current_aicte_code: regAicteCode,
+          custom_apaar_id: regCustomApaar.trim() || undefined,
+        }),
+      });
+
+      const json = await res.json();
+      if (!res.ok) {
+        notify(json.error || "Registration failed", "error");
+        setIsMinting(false);
+        setMintStage(0);
+        return;
+      }
+
+      notify(`🎉 APAAR ID ${json.apaar_id} Minted! Welcome, ${regFullName}!`, "success");
+      logTelemetry("AUTH", `UIDAI eKYC Registered & Minted APAAR ID: ${json.apaar_id} (${regFullName})`);
+
+      setShowRegisterModal(false);
+      setIsMinting(false);
+      setMintStage(0);
+      setRegFullName("");
+      setRegCustomApaar("");
+
+      setActiveTab("student");
+      handleStudentLogin(json.apaar_id, "123456", true);
+    } catch (err: any) {
+      notify(err.message || "Failed to register student", "error");
+      setIsMinting(false);
+      setMintStage(0);
     }
   }
 
@@ -1147,12 +1248,72 @@ export default function CommandCenter() {
                 <button
                   onClick={() => handleStudentLogin(studentApaarInput, studentOtpInput, true)}
                   disabled={studentLoading}
-                  className="bg-emerald-500 hover:bg-emerald-400 text-slate-950 text-xs font-bold px-4 py-2 rounded-xl transition-all shadow-md shadow-emerald-500/20 disabled:opacity-50"
+                  className="bg-emerald-500 hover:bg-emerald-400 text-slate-950 text-xs font-bold px-4 py-2 rounded-xl transition-all shadow-md shadow-emerald-500/20 disabled:opacity-50 cursor-pointer"
                 >
                   {studentLoading ? "Verifying..." : "Authenticate"}
                 </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setRegCustomApaar(studentApaarInput && /^\d{12}$/.test(studentApaarInput) ? studentApaarInput : "");
+                    setShowRegisterModal(true);
+                  }}
+                  className="bg-gradient-to-r from-amber-500 via-emerald-500 to-cyan-500 hover:from-amber-400 hover:to-cyan-400 text-slate-950 text-xs font-extrabold px-3.5 py-2 rounded-xl transition-all shadow-md shadow-cyan-500/20 flex items-center gap-1.5 cursor-pointer"
+                >
+                  <Sparkles className="w-3.5 h-3.5" />
+                  <span>+ Register / Mint APAAR ID</span>
+                </button>
+              </div>
+              <div className="w-full flex flex-wrap items-center justify-between pt-2 border-t border-slate-800/80 text-[11px] font-mono text-slate-400">
+                <label className="flex items-center gap-2 cursor-pointer hover:text-emerald-300 transition-colors">
+                  <input
+                    type="checkbox"
+                    checked={autoProvisionEnabled}
+                    onChange={(e) => setAutoProvisionEnabled(e.target.checked)}
+                    className="rounded border-slate-700 bg-slate-950 text-emerald-500 focus:ring-0 cursor-pointer"
+                  />
+                  <span>Zero-Dead-End Mode: Auto-Provision Unregistered 12-Digit IDs Live</span>
+                </label>
+                <span className="text-slate-500">Demo Simulation OTP: 123456</span>
               </div>
             </div>
+
+            {/* ZERO-DEAD-END DEMO MODE FALLBACK PROMPT */}
+            {unregisteredApaarPrompt && (
+              <div className="p-4 rounded-2xl bg-amber-950/60 border border-amber-500/60 text-amber-200 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 shadow-lg shadow-amber-950/40 animate-in slide-in-from-top-2">
+                <div className="flex items-center gap-3">
+                  <div className="w-8 h-8 rounded-xl bg-amber-500/20 border border-amber-500/40 flex items-center justify-center text-amber-400 shrink-0">
+                    <Sparkles className="w-4 h-4" />
+                  </div>
+                  <div>
+                    <h4 className="text-xs font-bold text-white">
+                      APAAR ID <span className="font-mono text-amber-400">{unregisteredApaarPrompt.apaarId}</span> is not registered in the National Depository yet.
+                    </h4>
+                    <p className="text-[11px] text-amber-300/80">
+                      Zero-Dead-End Mode: Instantly onboard this ID via DigiLocker DPI pull or complete full UIDAI eKYC.
+                    </p>
+                  </div>
+                </div>
+                <div className="flex items-center gap-2 shrink-0">
+                  <button
+                    onClick={() => handleStudentLogin(unregisteredApaarPrompt.apaarId, "123456", true, true)}
+                    className="bg-amber-400 hover:bg-amber-300 text-slate-950 text-xs font-bold px-3.5 py-1.5 rounded-xl shadow transition-all cursor-pointer flex items-center gap-1.5"
+                  >
+                    <Zap className="w-3.5 h-3.5" />
+                    <span>Instant-Onboard (1-Click)</span>
+                  </button>
+                  <button
+                    onClick={() => {
+                      setRegCustomApaar(unregisteredApaarPrompt.apaarId);
+                      setShowRegisterModal(true);
+                    }}
+                    className="bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-600 text-xs font-semibold px-3 py-1.5 rounded-xl transition-all cursor-pointer"
+                  >
+                    Custom eKYC Form
+                  </button>
+                </div>
+              </div>
+            )}
 
             {studentData && (
               <>
@@ -1960,7 +2121,19 @@ export default function CommandCenter() {
                     </p>
                   </div>
                 </div>
-                <div className="text-right">
+                <div className="flex flex-wrap items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setRegCustomApaar("");
+                      setRegAicteCode("1-10000001");
+                      setShowRegisterModal(true);
+                    }}
+                    className="bg-gradient-to-r from-amber-500 via-emerald-500 to-cyan-500 hover:from-amber-400 hover:to-cyan-400 text-slate-950 text-xs font-extrabold px-3.5 py-1.5 rounded-xl transition-all shadow-md shadow-cyan-500/20 flex items-center gap-1.5 cursor-pointer"
+                  >
+                    <Sparkles className="w-3.5 h-3.5" />
+                    <span>+ Mint New Student APAAR ID</span>
+                  </button>
                   <span className="text-[10px] font-mono uppercase bg-cyan-500/10 text-cyan-400 border border-cyan-500/20 px-2.5 py-1 rounded-full">
                     Institution: 1-10000001 (Chennai Institute of AI & Tech)
                   </span>
@@ -3307,6 +3480,300 @@ export default function CommandCenter() {
                   Done
                 </button>
               </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ========================================================================= */}
+      {/* MINT APAAR ID / NEW STUDENT eKYC ONBOARDING MODAL */}
+      {/* ========================================================================= */}
+      {showRegisterModal && (
+        <div
+          className="fixed inset-0 z-50 bg-black/85 backdrop-blur-2xl flex items-center justify-center p-3 sm:p-6 animate-in fade-in duration-200"
+          onClick={() => !isMinting && setShowRegisterModal(false)}
+        >
+          <div
+            className="w-full max-w-2xl bg-slate-900 border border-cyan-500/40 rounded-3xl shadow-2xl shadow-cyan-950/50 overflow-hidden flex flex-col max-h-[92vh] animate-in zoom-in-95 duration-200"
+            onClick={(e) => e.stopPropagation()}
+          >
+            {/* Modal Header */}
+            <div className="p-5 sm:p-6 border-b border-slate-800 flex items-start justify-between gap-4 bg-gradient-to-r from-cyan-950/50 via-slate-950 to-slate-900">
+              <div className="space-y-1">
+                <div className="flex flex-wrap items-center gap-2">
+                  <span className="text-[10px] font-mono uppercase bg-cyan-500/10 text-cyan-400 border border-cyan-500/30 px-2 py-0.5 rounded font-bold">
+                    UIDAI eKYC 2.0
+                  </span>
+                  <span className="text-[10px] font-mono uppercase bg-emerald-500/10 text-emerald-400 border border-emerald-500/30 px-2 py-0.5 rounded font-bold">
+                    DigiLocker DPI Verified
+                  </span>
+                  <span className="text-[10px] font-mono uppercase bg-amber-500/10 text-amber-400 border border-amber-500/30 px-2 py-0.5 rounded font-bold">
+                    ABC Ledger Minting
+                  </span>
+                </div>
+                <h3 className="text-lg sm:text-xl font-bold text-white tracking-tight flex items-center gap-2">
+                  <Sparkles className="w-5 h-5 text-amber-400" />
+                  <span>UIDAI eKYC &amp; DigiLocker Student Onboarding</span>
+                </h3>
+                <p className="text-xs text-slate-400">
+                  Mint an official 12-digit APAAR ID anchored to India&apos;s National Academic Depository ledger.
+                </p>
+              </div>
+
+              {!isMinting && (
+                <button
+                  type="button"
+                  onClick={() => setShowRegisterModal(false)}
+                  className="p-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-400 hover:text-white transition-colors cursor-pointer"
+                >
+                  <X className="w-5 h-5" />
+                </button>
+              )}
+            </div>
+
+            {/* Modal Body */}
+            <div className="p-5 sm:p-6 overflow-y-auto space-y-5">
+              {isMinting ? (
+                <div className="py-12 flex flex-col items-center justify-center text-center space-y-6">
+                  <div className="relative">
+                    <div className="w-20 h-20 rounded-full border-4 border-cyan-500/20 border-t-cyan-400 animate-spin flex items-center justify-center" />
+                    <div className="absolute inset-0 flex items-center justify-center">
+                      <Sparkles className="w-8 h-8 text-amber-400 animate-pulse" />
+                    </div>
+                  </div>
+
+                  <div className="space-y-3 max-w-md">
+                    <h4 className="text-base font-bold text-white">
+                      Minting Official APAAR ID on AICTE Ledger
+                    </h4>
+
+                    {/* Step progress pills */}
+                    <div className="space-y-2 text-left">
+                      <div
+                        className={`p-3 rounded-xl border text-xs font-mono flex items-center gap-2.5 transition-all ${
+                          mintStage >= 1
+                            ? "bg-cyan-950/60 border-cyan-500/50 text-cyan-300"
+                            : "bg-slate-950/40 border-slate-800 text-slate-500"
+                        }`}
+                      >
+                        {mintStage > 1 ? (
+                          <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0" />
+                        ) : (
+                          <div className="w-4 h-4 rounded-full border-2 border-cyan-400 border-t-transparent animate-spin shrink-0" />
+                        )}
+                        <span>Stage 1: Validating Aadhaar eKYC via UIDAI Digital Signature Gateway...</span>
+                      </div>
+
+                      <div
+                        className={`p-3 rounded-xl border text-xs font-mono flex items-center gap-2.5 transition-all ${
+                          mintStage >= 2
+                            ? "bg-emerald-950/60 border-emerald-500/50 text-emerald-300"
+                            : "bg-slate-950/40 border-slate-800 text-slate-500"
+                        }`}
+                      >
+                        {mintStage > 2 ? (
+                          <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0" />
+                        ) : mintStage === 2 ? (
+                          <div className="w-4 h-4 rounded-full border-2 border-emerald-400 border-t-transparent animate-spin shrink-0" />
+                        ) : (
+                          <Clock className="w-4 h-4 text-slate-600 shrink-0" />
+                        )}
+                        <span>Stage 2: Fetching UDISE+ School Education History &amp; 10th/12th PEN...</span>
+                      </div>
+
+                      <div
+                        className={`p-3 rounded-xl border text-xs font-mono flex items-center gap-2.5 transition-all ${
+                          mintStage >= 3
+                            ? "bg-amber-950/60 border-amber-500/50 text-amber-300"
+                            : "bg-slate-950/40 border-slate-800 text-slate-500"
+                        }`}
+                      >
+                        {mintStage === 3 ? (
+                          <div className="w-4 h-4 rounded-full border-2 border-amber-400 border-t-transparent animate-spin shrink-0" />
+                        ) : (
+                          <Clock className="w-4 h-4 text-slate-600 shrink-0" />
+                        )}
+                        <span>Stage 3: Anchoring 12-Digit Identifier to AICTE ABC Cryptographic Ledger...</span>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              ) : (
+                <form onSubmit={handleRegisterSubmit} className="space-y-4">
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                    {/* Full Name */}
+                    <div className="sm:col-span-2">
+                      <label className="block text-xs font-bold text-slate-300 mb-1">
+                        Student Full Name (as on Aadhaar / Matriculation) <span className="text-rose-400">*</span>
+                      </label>
+                      <input
+                        type="text"
+                        required
+                        value={regFullName}
+                        onChange={(e) => setRegFullName(e.target.value)}
+                        placeholder="e.g. Dr. Vikram Seth / Aarav Patel"
+                        className="w-full bg-slate-950/80 border border-slate-700 rounded-xl px-3.5 py-2.5 text-xs text-white focus:outline-none focus:border-cyan-400"
+                      />
+                    </div>
+
+                    {/* Date of Birth */}
+                    <div>
+                      <label className="block text-xs font-bold text-slate-300 mb-1">
+                        Date of Birth <span className="text-rose-400">*</span>
+                      </label>
+                      <input
+                        type="date"
+                        required
+                        value={regDob}
+                        onChange={(e) => setRegDob(e.target.value)}
+                        className="w-full bg-slate-950/80 border border-slate-700 rounded-xl px-3.5 py-2 text-xs font-mono text-white focus:outline-none focus:border-cyan-400"
+                      />
+                    </div>
+
+                    {/* Gender */}
+                    <div>
+                      <label className="block text-xs font-bold text-slate-300 mb-1">
+                        Gender <span className="text-rose-400">*</span>
+                      </label>
+                      <select
+                        value={regGender}
+                        onChange={(e) => setRegGender(e.target.value)}
+                        className="w-full bg-slate-950/80 border border-slate-700 rounded-xl px-3.5 py-2 text-xs text-white focus:outline-none focus:border-cyan-400"
+                      >
+                        <option value="Male">Male</option>
+                        <option value="Female">Female</option>
+                        <option value="Other">Other</option>
+                      </select>
+                    </div>
+
+                    {/* Aadhaar Last 4 */}
+                    <div>
+                      <label className="block text-xs font-bold text-slate-300 mb-1">
+                        Aadhaar Last 4 Digits <span className="text-rose-400">*</span>
+                      </label>
+                      <input
+                        type="text"
+                        maxLength={4}
+                        required
+                        pattern="\d{4}"
+                        value={regAadhaarLast4}
+                        onChange={(e) => setRegAadhaarLast4(e.target.value.replace(/\D/g, ""))}
+                        placeholder="e.g. 8821"
+                        className="w-full bg-slate-950/80 border border-slate-700 rounded-xl px-3.5 py-2 text-xs font-mono text-white focus:outline-none focus:border-cyan-400"
+                      />
+                    </div>
+
+                    {/* UDISE+ PEN */}
+                    <div>
+                      <label className="block text-xs font-bold text-slate-300 mb-1">
+                        UDISE+ School PEN (Optional)
+                      </label>
+                      <input
+                        type="text"
+                        value={regUdisePen}
+                        onChange={(e) => setRegUdisePen(e.target.value)}
+                        placeholder="e.g. PEN9981234 (Auto-assigned if blank)"
+                        className="w-full bg-slate-950/80 border border-slate-700 rounded-xl px-3.5 py-2 text-xs font-mono text-white focus:outline-none focus:border-cyan-400"
+                      />
+                    </div>
+
+                    {/* Class 10 % */}
+                    <div>
+                      <label className="block text-xs font-bold text-slate-300 mb-1">
+                        Class 10th Percentage (%)
+                      </label>
+                      <input
+                        type="number"
+                        step="0.1"
+                        min="35"
+                        max="100"
+                        value={regClass10}
+                        onChange={(e) => setRegClass10(e.target.value)}
+                        placeholder="e.g. 92.4"
+                        className="w-full bg-slate-950/80 border border-slate-700 rounded-xl px-3.5 py-2 text-xs font-mono text-white focus:outline-none focus:border-cyan-400"
+                      />
+                    </div>
+
+                    {/* Class 12 % */}
+                    <div>
+                      <label className="block text-xs font-bold text-slate-300 mb-1">
+                        Class 12th Percentage (%)
+                      </label>
+                      <input
+                        type="number"
+                        step="0.1"
+                        min="35"
+                        max="100"
+                        value={regClass12}
+                        onChange={(e) => setRegClass12(e.target.value)}
+                        placeholder="e.g. 89.8"
+                        className="w-full bg-slate-950/80 border border-slate-700 rounded-xl px-3.5 py-2 text-xs font-mono text-white focus:outline-none focus:border-cyan-400"
+                      />
+                    </div>
+
+                    {/* Institution */}
+                    <div className="sm:col-span-2">
+                      <label className="block text-xs font-bold text-slate-300 mb-1">
+                        Admitted AICTE Institution <span className="text-rose-400">*</span>
+                      </label>
+                      <select
+                        value={regAicteCode}
+                        onChange={(e) => setRegAicteCode(e.target.value)}
+                        className="w-full bg-slate-950/80 border border-slate-700 rounded-xl px-3.5 py-2 text-xs text-white focus:outline-none focus:border-cyan-400"
+                      >
+                        <option value="1-10000001">1-10000001 — Indian Institute of Technology Madras (Chennai, TN)</option>
+                        <option value="1-20000002">1-20000002 — Indian Institute of Science (IISc Bengaluru, KA)</option>
+                      </select>
+                    </div>
+
+                    {/* Custom 12-Digit APAAR ID */}
+                    <div className="sm:col-span-2">
+                      <div className="flex items-center justify-between mb-1">
+                        <label className="text-xs font-bold text-slate-300">
+                          Custom 12-Digit APAAR ID (Optional)
+                        </label>
+                        <span className="text-[10px] text-cyan-400 font-mono">
+                          Leave blank to auto-mint unique 12 digits
+                        </span>
+                      </div>
+                      <input
+                        type="text"
+                        maxLength={12}
+                        value={regCustomApaar}
+                        onChange={(e) => setRegCustomApaar(e.target.value.replace(/\D/g, ""))}
+                        placeholder="e.g. 555888999111 (or leave blank to auto-mint)"
+                        className="w-full bg-slate-950/80 border border-slate-700 rounded-xl px-3.5 py-2 text-xs font-mono text-white focus:outline-none focus:border-cyan-400"
+                      />
+                    </div>
+                  </div>
+
+                  {/* DPI Genesis Guarantee Notice */}
+                  <div className="p-3.5 rounded-2xl bg-cyan-950/40 border border-cyan-500/30 flex items-start gap-3 text-[11px] text-cyan-200/90 font-mono">
+                    <ShieldCheck className="w-4 h-4 text-cyan-400 shrink-0 mt-0.5" />
+                    <span>
+                      <strong>DigiLocker Genesis Guarantee:</strong> Onboarding automatically anchors 1 welcome foundation credit (4 Credits, Grade O) with a SHA-256 cryptographic seal and initializes an active DEPA consent token for instant QR verification.
+                    </span>
+                  </div>
+
+                  {/* Submit buttons */}
+                  <div className="pt-2 flex items-center justify-end gap-3">
+                    <button
+                      type="button"
+                      onClick={() => setShowRegisterModal(false)}
+                      className="px-4 py-2.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs font-semibold transition-colors cursor-pointer"
+                    >
+                      Cancel
+                    </button>
+                    <button
+                      type="submit"
+                      className="bg-gradient-to-r from-amber-500 via-emerald-500 to-cyan-500 hover:from-amber-400 hover:to-cyan-400 text-slate-950 text-xs font-extrabold px-5 py-2.5 rounded-xl transition-all shadow-lg shadow-cyan-500/25 flex items-center gap-2 cursor-pointer"
+                    >
+                      <Sparkles className="w-4 h-4" />
+                      <span>Mint APAAR ID via DigiLocker eKYC</span>
+                    </button>
+                  </div>
+                </form>
+              )}
             </div>
           </div>
         </div>

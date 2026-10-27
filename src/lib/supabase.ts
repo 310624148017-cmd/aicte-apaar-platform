@@ -28,6 +28,8 @@ export interface ApaarProfile {
   gender: string | null;
   aadhaar_last_4?: string | null;
   udise_pen?: string | null;
+  class_10_percentage?: number | null;
+  class_12_percentage?: number | null;
   current_aicte_code: string | null;
   enrollment_status: "ACTIVE" | "INACTIVE" | "TRANSFERRED" | "EXITED" | string;
   total_credits: number;
