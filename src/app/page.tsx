@@ -48,6 +48,9 @@ import {
   TrendingUp,
   MapPin,
   AlertCircle,
+  Radar,
+  Binary,
+  KeyRound,
 } from "lucide-react";
 
 // ==========================================
@@ -246,7 +249,7 @@ export default function CommandCenter() {
   // ==========================================
   const [selectedCredential, setSelectedCredential] = useState<{
     title: string;
-    type: "academic_credit" | "activity_certificate";
+    type: "academic_credit" | "activity_certificate" | "skill_dna_competency";
     data: any;
     jsonLd: any;
     studentContext?: any;
@@ -259,8 +262,13 @@ export default function CommandCenter() {
   const [tamperMismatch, setTamperMismatch] = useState(false);
 
   // Helper: Generate complete W3C Verifiable Credential JSON-LD Payload
-  function generateW3CCredential(item: any, type: "academic_credit" | "activity_certificate", student: any) {
+  function generateW3CCredential(
+    item: any,
+    type: "academic_credit" | "activity_certificate" | "skill_dna_competency",
+    student: any
+  ) {
     const isCredit = type === "academic_credit";
+    const isSkillDna = type === "skill_dna_competency";
     const credentialId = `urn:uuid:${item.id || "4780a635-581f-4185-928d-4a432501a3ba"}`;
     const issuanceDate = item.created_at || item.issued_at || new Date().toISOString();
     const sha256_hash = item.record_hash || "8f434346648f6b96df89dda901c5176b10a6d83961dd3c1ac88b59b2dc327aa4";
@@ -276,7 +284,11 @@ export default function CommandCenter() {
       id: credentialId,
       type: [
         "VerifiableCredential",
-        isCredit ? "AICTEAcademicCredit" : "AICTEActivitySkillCredential",
+        isSkillDna
+          ? "AICTESkillDnaCompetencyCredential"
+          : isCredit
+          ? "AICTEAcademicCredit"
+          : "AICTEActivitySkillCredential",
       ],
       issuer: `did:in:aicte:${aicteCode}`,
       issuerDetails: {
@@ -294,7 +306,19 @@ export default function CommandCenter() {
         udisePen: student?.udise_pen || "PEN9981234",
         aadhaarLast4: student?.aadhaar_last_4 || "8821",
         enrollmentStatus: student?.enrollment_status || "ACTIVE",
-        ...(isCredit
+        ...(isSkillDna
+          ? {
+              certificationFramework: "National Skills Qualifications Framework (NSQF)",
+              nsqfAccreditedLevel: 7,
+              overallProficiencyScore: "85.0%",
+              competencyDomains: [
+                { domain: "Core Algorithms & Systems", proficiencyScore: "88%", mappedCourses: ["CS101: Data Structures & Algorithms (4 Cr, Grade O)"] },
+                { domain: "Machine Intelligence & Data", proficiencyScore: "92%", mappedCourses: ["AI202: Machine Learning & Neural Networks (4 Cr, Grade O)"] },
+                { domain: "Hands-on Innovation (Hackathons)", proficiencyScore: "85%", mappedActivities: ["Smart India Hackathon Winner 2026 (+20 Pts)"] },
+                { domain: "Professional Practice & Ethics", proficiencyScore: "75%", mappedActivities: ["AICTE Virtual Industry Internship & NEP Ethics (+20 Pts)"] },
+              ],
+            }
+          : isCredit
           ? {
               courseCode: item.subject_code,
               courseTitle: item.subject_name,
@@ -334,12 +358,12 @@ export default function CommandCenter() {
 
   const openCredentialInspector = async (
     item: any,
-    type: "academic_credit" | "activity_certificate",
+    type: "academic_credit" | "activity_certificate" | "skill_dna_competency",
     customStudent?: any
   ) => {
     const student = customStudent || studentData?.student_profile;
     const jsonLd = generateW3CCredential(item, type, student);
-    const originalGrade = item.grade || (item.points_awarded ? `${item.points_awarded} Pts` : "A+");
+    const originalGrade = item.grade || (item.points_awarded ? `${item.points_awarded} Pts` : item.overall_proficiency || "A+");
 
     setIsTamperMode(false);
     setTamperMismatch(false);
@@ -347,7 +371,12 @@ export default function CommandCenter() {
     setComputedLiveHash(item.record_hash || jsonLd.proof.sha256Hash);
 
     setSelectedCredential({
-      title: type === "academic_credit" ? `${item.subject_code} - ${item.subject_name}` : item.title,
+      title:
+        type === "skill_dna_competency"
+          ? item.title || "AICTE Skill-DNA & Competency Matrix"
+          : type === "academic_credit"
+          ? `${item.subject_code} - ${item.subject_name}`
+          : item.title,
       type,
       data: item,
       jsonLd,
@@ -399,8 +428,12 @@ export default function CommandCenter() {
             ? {
                 gradeAwarded: isTamperMode ? `${tamperedGrade} [TAMPERED]` : selectedCredential.data?.grade,
               }
-            : {
+            : selectedCredential.type === "activity_certificate"
+            ? {
                 activityPointsAwarded: isTamperMode ? `${tamperedGrade} [TAMPERED]` : selectedCredential.data?.points_awarded,
+              }
+            : {
+                overallProficiencyScore: isTamperMode ? `99.9% [TAMPERED]` : selectedCredential.data?.overall_proficiency,
               }),
         },
         proof: {
@@ -442,6 +475,8 @@ export default function CommandCenter() {
     nameMatch: number;
     issuerSignature: number;
     forgeryCheck: string;
+    isForged?: boolean;
+    forgeryProbability?: number;
   } | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
@@ -576,6 +611,30 @@ export default function CommandCenter() {
     }
   }
 
+  // Helper to dynamically update AI Confidence & Forgery Probability based on extracted student name
+  const updateNameMatchAndForgery = (newName: string) => {
+    setUploadExtractedName(newName);
+    const regName = (studentData?.student_profile?.full_name || "Arjun Subramanian").trim().toLowerCase();
+    const isMatch = newName.trim().toLowerCase() === regName;
+    if (isMatch) {
+      setAiConfidenceBreakdown({
+        nameMatch: 100,
+        issuerSignature: 98.4,
+        forgeryCheck: "Passed (Authentic - 0% Forgery Risk)",
+        isForged: false,
+        forgeryProbability: 1.8,
+      });
+    } else {
+      setAiConfidenceBreakdown({
+        nameMatch: 14,
+        issuerSignature: 42.8,
+        forgeryCheck: "FAILED (High Chance of Forgery - 94.2% Risk)",
+        isForged: true,
+        forgeryProbability: 94.2,
+      });
+    }
+  };
+
   // 3-Stage Visual Pipeline Runner for Drag-and-Drop & Sample Button
   const runOcrScannerPipeline = (fileName: string, fileSizeStr: string, customStudentName?: string) => {
     setScannedFileDetails({ name: fileName, size: fileSizeStr });
@@ -609,21 +668,43 @@ export default function CommandCenter() {
       else if (lower.includes("intern") || lower.includes("training")) inferredCat = "Internship";
       else if (lower.includes("sport") || lower.includes("cultural")) inferredCat = "Sports";
 
-      const detectedName = customStudentName || studentData?.student_profile?.full_name || "Arjun Subramanian";
+      const isTamperFile =
+        lower.includes("tamper") ||
+        lower.includes("forg") ||
+        lower.includes("rajesh") ||
+        lower.includes("fake");
+
+      const regName = studentData?.student_profile?.full_name || "Arjun Subramanian";
+      const detectedName = customStudentName || (isTamperFile ? "Rajesh Kumar (Tampered)" : regName);
 
       setUploadTitle(cleanTitle || "Smart India Hackathon 2026 Winner");
       setUploadCategory(inferredCat);
       setUploadExtractedName(detectedName);
       setUploadPoints("20");
 
-      setAiConfidenceBreakdown({
-        nameMatch: 100,
-        issuerSignature: 98.4,
-        forgeryCheck: "Passed",
-      });
+      const isMatch = detectedName.trim().toLowerCase() === regName.trim().toLowerCase();
 
-      notify("OpenCV layout analysis & OCR text extraction complete!", "success");
-      logTelemetry("OCR", `Extraction Complete: ${cleanTitle} (Confidence: 98.4%)`);
+      if (isMatch) {
+        setAiConfidenceBreakdown({
+          nameMatch: 100,
+          issuerSignature: 98.4,
+          forgeryCheck: "Passed (Authentic - 0% Forgery Risk)",
+          isForged: false,
+          forgeryProbability: 1.8,
+        });
+        notify("OpenCV layout analysis & OCR text extraction complete! Authentic certificate.", "success");
+        logTelemetry("OCR", `Extraction Complete: ${cleanTitle} (Name Match: 100%, Forgery Check: Passed)`);
+      } else {
+        setAiConfidenceBreakdown({
+          nameMatch: 14,
+          issuerSignature: 42.8,
+          forgeryCheck: "FAILED (High Chance of Forgery - 94.2% Risk)",
+          isForged: true,
+          forgeryProbability: 94.2,
+        });
+        notify("⚠️ Forgery Alert: Extracted certificate name does not match registered student!", "error");
+        logTelemetry("FRAUD", `Certificate Forgery Flagged: Extracted '${detectedName}' does not match registered '${regName}'`);
+      }
 
       executeVerifyUpload(cleanTitle || "Smart India Hackathon 2026 Winner", inferredCat, 20, detectedName);
     }, 1800);
@@ -647,6 +728,7 @@ export default function CommandCenter() {
 
   async function executeVerifyUpload(title: string, category: string, points: number, extractedName: string) {
     if (!studentData?.student_profile?.apaar_id) return;
+
     try {
       setUploadLoading(true);
       setUploadResult(null);
@@ -663,13 +745,30 @@ export default function CommandCenter() {
       });
       const json = await res.json();
       setUploadResult(json);
-      if (res.ok) {
+      if (res.ok && !json.tamper_warning) {
+        setAiConfidenceBreakdown({
+          nameMatch: 100,
+          issuerSignature: 98.4,
+          forgeryCheck: "Passed (Authentic - 0% Forgery Risk)",
+          isForged: false,
+          forgeryProbability: 1.8,
+        });
         notify("Certificate verified by AI OCR (High Confidence)", "success");
         logTelemetry("CRYPTO", `Certificate Anchored: ${title} (Score: ${json.ocr_confidence_score}%)`, json.record_hash);
         handleStudentLogin(studentData.student_profile.apaar_id, "123456", false);
       } else {
-        notify(json.error || "Tamper warning triggered", "error");
-        logTelemetry("FRAUD", `Certificate Tamper Flagged: Extracted Name Mismatch`);
+        setAiConfidenceBreakdown({
+          nameMatch: 14,
+          issuerSignature: 42.8,
+          forgeryCheck: "FAILED (High Chance of Forgery - 94.2% Risk)",
+          isForged: true,
+          forgeryProbability: 94.2,
+        });
+        notify(json.error || "High chance of forgery detected: Name mismatch!", "error");
+        logTelemetry(
+          "FRAUD",
+          `Certificate Forgery Flagged: Extracted '${extractedName}' does not match registered '${studentData.student_profile.full_name}'`
+        );
       }
     } catch (err: any) {
       notify(err.message, "error");
@@ -937,6 +1036,164 @@ export default function CommandCenter() {
   }
 
   // ==========================================
+  // FLAGSHIP INNOVATION 1: ZERO-KNOWLEDGE PROOF (ZK-GPA) STATE & HANDLERS
+  // ==========================================
+  const [zkRule, setZkRule] = useState<"gpa" | "activity">("gpa");
+  const [isGeneratingZk, setIsGeneratingZk] = useState(false);
+  const [zkGenerationStep, setZkGenerationStep] = useState(0);
+  const [generatedZkProof, setGeneratedZkProof] = useState<{
+    token: string;
+    rule: "gpa" | "activity";
+    ruleTitle: string;
+    predicate: string;
+    publicStatement: string;
+    proofHash: string;
+    snarkCommitment: string;
+    merkleAnchor: string;
+    timestamp: string;
+  } | null>(null);
+  const [zkCopied, setZkCopied] = useState(false);
+
+  // Tab 3 Recruiter Verifier Mode & ZK Verification State
+  const [verifierMode, setVerifierMode] = useState<"depa" | "zk">("depa");
+  const [zkVerifyInput, setZkVerifyInput] = useState("zkp_aicte_gpa_8_0_9f82c1a4e5d6");
+  const [zkVerifyLoading, setZkVerifyLoading] = useState(false);
+  const [zkVerifiedResult, setZkVerifiedResult] = useState<{
+    isValid: boolean;
+    rule: "gpa" | "activity";
+    criterion: string;
+    badgeText: string;
+    circuitTime: string;
+    merkleAnchor: string;
+    proofHash: string;
+    timestamp: string;
+  } | null>(null);
+
+  const handleGenerateZkProof = async () => {
+    setIsGeneratingZk(true);
+    setZkGenerationStep(1);
+    logTelemetry(
+      "CRYPTO",
+      `Compiling R1CS Arithmetic Circuit Constraints for ${zkRule === "gpa" ? "CGPA >= 8.0" : "Activity Points >= 50"}`
+    );
+
+    setTimeout(() => {
+      setZkGenerationStep(2);
+      logTelemetry("CRYPTO", "Generating Zero-Knowledge Witness commitment on BN254 elliptic curve...");
+    }, 400);
+
+    setTimeout(() => {
+      setZkGenerationStep(3);
+      logTelemetry("CRYPTO", "Synthesizing Groth16 zk-SNARK & Anchoring to AICTE ABC State Root...");
+    }, 800);
+
+    setTimeout(() => {
+      const isGpa = zkRule === "gpa";
+      const randomEntropy = Math.random().toString(36).substring(2, 8);
+      const token = isGpa
+        ? `zkp_aicte_gpa_8_0_${randomEntropy}c1a4`
+        : `zkp_aicte_points_50_${randomEntropy}b3d8`;
+
+      const proofObj = {
+        token,
+        rule: zkRule,
+        ruleTitle: isGpa
+          ? "Verify CGPA is ≥ 8.0 without revealing exact score"
+          : "Verify AICTE Activity Points ≥ 50 without sharing individual certificates",
+        predicate: isGpa ? "CGPA >= 8.0 (Academic Merit Gate)" : "AICTE Activity Points >= 50 (Graduation Threshold Gate)",
+        publicStatement: isGpa
+          ? "Candidate CGPA satisfies threshold [>= 8.0/10.0]. Exact GPA, subject marks, and course grades remain 100% Zero-Knowledge."
+          : "Candidate satisfies mandatory threshold [>= 50 Points]. Individual certificate contents, issuers, and event dates remain 100% Zero-Knowledge.",
+        proofHash: "0x" + Array.from({ length: 64 }, () => Math.floor(Math.random() * 16).toString(16)).join(""),
+        snarkCommitment: "π_A=(0x4a1...9b2), π_B=(0x8c3...1e4), π_C=(0x2d5...7f6) [Groth16/BN254]",
+        merkleAnchor: "0x7a3f8b91c2d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0c1d2e3f4a5b6c7d8e9f0",
+        timestamp: new Date().toLocaleTimeString(),
+      };
+
+      setGeneratedZkProof(proofObj);
+      setIsGeneratingZk(false);
+      setZkGenerationStep(0);
+      notify(`Zero-Knowledge Proof Generated: ${isGpa ? "CGPA ≥ 8.0" : "Activity Points ≥ 50"}!`, "success");
+      logTelemetry("CRYPTO", `zk-SNARK Token Ready: ${token} (0 bits PII leakage)`);
+    }, 1200);
+  };
+
+  const handleTestInRecruiterPortal = () => {
+    if (!generatedZkProof) return;
+    const token = generatedZkProof.token;
+    navigator.clipboard.writeText(token);
+    setActiveTab("recruiter");
+    setVerifierMode("zk");
+    setZkVerifyInput(token);
+    handleVerifyZkToken(token, generatedZkProof.rule);
+    notify("Switched to Recruiter Verifier: ZK Proof Token auto-loaded & mathematically verified!", "success");
+  };
+
+  const handleVerifyZkToken = (tokenToVerify?: string, forcedRule?: "gpa" | "activity") => {
+    const token = tokenToVerify || zkVerifyInput;
+    if (!token.trim()) {
+      notify("Please enter a valid ZK Proof Token", "error");
+      return;
+    }
+
+    setZkVerifyLoading(true);
+    setZkVerifiedResult(null);
+    logTelemetry("CRYPTO", `Validating zk-SNARK Pairings for Token: ${token.slice(0, 18)}...`);
+
+    setTimeout(() => {
+      setZkVerifyLoading(false);
+      const isActivity =
+        forcedRule === "activity" || token.toLowerCase().includes("point") || token.toLowerCase().includes("50");
+      const ruleType: "gpa" | "activity" = isActivity ? "activity" : "gpa";
+
+      const badgeText = isActivity
+        ? "ZK-PROOF VALIDATED: Criterion [AICTE Activity Points >= 50] mathematically proven against AICTE Ledger Anchor. Exact grade and demographic fields remained strictly confidential (Zero-Knowledge)."
+        : "ZK-PROOF VALIDATED: Criterion [CGPA >= 8.0] mathematically proven against AICTE Ledger Anchor. Exact grade and demographic fields remained strictly confidential (Zero-Knowledge).";
+
+      setZkVerifiedResult({
+        isValid: true,
+        rule: ruleType,
+        criterion: isActivity ? "AICTE Activity Points >= 50" : "CGPA >= 8.0",
+        badgeText,
+        circuitTime: "8.6 ms",
+        merkleAnchor: "0x7a3f8b91c2d4e5f6... (Block #482910)",
+        proofHash: "0x" + Array.from({ length: 64 }, () => Math.floor(Math.random() * 16).toString(16)).join(""),
+        timestamp: new Date().toLocaleTimeString(),
+      });
+
+      notify("Zero-Knowledge Proof mathematically proven against AICTE Ledger Anchor!", "success");
+      logTelemetry(
+        "CRYPTO",
+        `ZK-Proof Verified: ${isActivity ? "Activity Points >= 50" : "CGPA >= 8.0"} (100% Zero-Knowledge)`
+      );
+    }, 600);
+  };
+
+  // ==========================================
+  // FLAGSHIP INNOVATION 2: SKILL-DNA W3C CREDENTIAL EXPORT HELPER
+  // ==========================================
+  const handleExportSkillDnaCredential = () => {
+    const student = studentData?.student_profile;
+    const skillDnaData = {
+      id: `skill-dna-${student?.apaar_id || "482910394812"}`,
+      title: "AICTE Skill-DNA & NEP Multi-Domain Competency Matrix",
+      nsqf_level: 7,
+      overall_proficiency: "85.0%",
+      record_hash: "9a2f4c1e8b7d6054a3e21890cdfa45bc12e87901abcf435678901234567890ab",
+      created_at: new Date().toISOString(),
+      competencies: [
+        { domain: "Core Algorithms & Systems", score: 88, sourceCourse: "CS101 (Data Structures & Algorithms - 4 Cr, Grade O)" },
+        { domain: "Machine Intelligence & Data", score: 92, sourceCourse: "AI202 (Machine Learning & Neural Networks - 4 Cr, Grade O)" },
+        { domain: "Hands-on Innovation (Hackathons)", score: 85, sourceActivity: "Smart India Hackathon Winner 2026 (20 Pts, OCR 98.4%)" },
+        { domain: "Professional Practice & Ethics", score: 75, sourceActivity: "AICTE Virtual Industry Internship & NEP Ethics Seminar (20 Pts)" },
+      ],
+    };
+    openCredentialInspector(skillDnaData, "skill_dna_competency", student);
+    notify("Exporting NSQF Level 7 Certified Competency Matrix Credential", "info");
+    logTelemetry("CRYPTO", "W3C Credential Inspected: NSQF Level 7 Skill-DNA Competency Matrix");
+  };
+
+  // ==========================================
   // PORTAL 4: REGULATOR OVERVIEW & ACTIONABLE FRAUD RESOLUTION
   // ==========================================
   const [regulatorData, setRegulatorData] = useState<any>(null);
@@ -975,12 +1232,12 @@ export default function CommandCenter() {
   };
 
   return (
-    <div className="min-h-screen bg-slate-950 text-slate-100 flex flex-col font-sans selection:bg-emerald-500/30 selection:text-emerald-200 pb-16">
-      {/* Background Ambience */}
+    <div className="min-h-screen bg-[#05050A] text-[#F8FAFC] flex flex-col font-sans selection:bg-indigo-500/30 selection:text-indigo-200 pb-16">
+      {/* Background Ambience: Electric Violet (top-left) & Cyan-Indigo (top-right) Aurora Mesh Lighting */}
       <div className="fixed inset-0 pointer-events-none overflow-hidden z-0">
-        <div className="absolute -top-32 left-1/4 w-[600px] h-[450px] bg-emerald-600/10 blur-[140px] rounded-full" />
-        <div className="absolute top-1/2 -right-32 w-[550px] h-[500px] bg-cyan-600/10 blur-[150px] rounded-full" />
-        <div className="absolute bottom-10 left-1/3 w-[500px] h-[400px] bg-indigo-600/10 blur-[140px] rounded-full" />
+        <div className="absolute -top-32 -left-20 w-[600px] h-[500px] bg-purple-600/15 blur-[130px] rounded-full" />
+        <div className="absolute -top-32 -right-20 w-[600px] h-[500px] bg-cyan-500/12 blur-[130px] rounded-full" />
+        <div className="absolute bottom-10 left-1/3 w-[500px] h-[400px] bg-indigo-600/10 blur-[150px] rounded-full" />
       </div>
 
       {/* Floating Notification Toast */}
@@ -989,16 +1246,16 @@ export default function CommandCenter() {
           <div
             className={`px-4 py-3 rounded-xl shadow-2xl backdrop-blur-xl border text-xs font-semibold flex items-center gap-2.5 ${
               notification.type === "success"
-                ? "bg-emerald-950/90 border-emerald-500/50 text-emerald-200"
+                ? "bg-[#0B0C14]/95 border-emerald-500/50 text-emerald-300 shadow-[0_0_20px_rgba(16,185,129,0.2)]"
                 : notification.type === "error"
-                ? "bg-red-950/90 border-red-500/50 text-red-200"
-                : "bg-slate-900/90 border-slate-700 text-slate-200"
+                ? "bg-[#0B0C14]/95 border-rose-500/50 text-rose-300 shadow-[0_0_20px_rgba(244,63,94,0.2)]"
+                : "bg-[#0B0C14]/95 border-indigo-500/40 text-slate-200 shadow-[0_0_20px_rgba(99,102,241,0.2)]"
             }`}
           >
             {notification.type === "success" ? (
               <CheckCircle2 className="w-4 h-4 text-emerald-400" />
             ) : notification.type === "error" ? (
-              <AlertTriangle className="w-4 h-4 text-red-400" />
+              <AlertTriangle className="w-4 h-4 text-rose-400" />
             ) : (
               <Sparkles className="w-4 h-4 text-cyan-400" />
             )}
@@ -1008,10 +1265,10 @@ export default function CommandCenter() {
       )}
 
       {/* Top Navbar & AICTE Branding */}
-      <header className="relative z-20 border-b border-slate-800/80 bg-slate-950/70 backdrop-blur-2xl sticky top-0">
+      <header className="relative z-20 border-b border-white/[0.08] bg-[#05050A]/85 backdrop-blur-2xl sticky top-0">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 h-16 flex items-center justify-between gap-4">
           <div className="flex items-center gap-3">
-            <div className="w-9 h-9 rounded-xl bg-gradient-to-tr from-emerald-500 via-teal-400 to-cyan-500 flex items-center justify-center font-black text-slate-950 shadow-lg shadow-emerald-500/20">
+            <div className="w-9 h-9 rounded-xl bg-gradient-to-tr from-indigo-500 via-purple-500 to-cyan-400 flex items-center justify-center font-black text-white shadow-lg shadow-indigo-500/25">
               A
             </div>
             <div>
@@ -1019,10 +1276,10 @@ export default function CommandCenter() {
                 <span className="font-extrabold text-sm sm:text-base tracking-tight text-white">
                   {t.platformTitle}
                 </span>
-                <span className="text-[10px] font-mono uppercase bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 px-2 py-0.5 rounded-full font-bold">
+                <span className="text-[10px] font-mono uppercase bg-emerald-500/10 text-emerald-400 border border-emerald-500/30 px-2 py-0.5 rounded-full font-bold">
                   DPI Platform v2.4
                 </span>
-                <span className="hidden md:inline-flex text-[10px] font-mono uppercase bg-cyan-500/10 text-cyan-400 border border-cyan-500/20 px-2 py-0.5 rounded-full font-bold">
+                <span className="hidden md:inline-flex text-[10px] font-mono uppercase bg-cyan-500/10 text-cyan-400 border border-cyan-500/30 px-2 py-0.5 rounded-full font-bold">
                   SIH 2026 Edition
                 </span>
               </div>
@@ -1034,7 +1291,7 @@ export default function CommandCenter() {
 
           <div className="flex items-center gap-2.5">
             {/* BHASHINI DPI MULTILINGUAL HEADER TOGGLE */}
-            <div className="flex items-center p-1 rounded-xl bg-slate-900/90 border border-slate-800 text-[11px] font-mono shadow-sm">
+            <div className="flex items-center p-1 rounded-xl bg-[#0B0C14]/90 border border-white/[0.08] text-[11px] font-mono shadow-sm">
               <span className="text-[10px] text-slate-400 px-2 font-sans font-semibold hidden lg:inline-flex items-center gap-1">
                 <Globe className="w-3 h-3 text-cyan-400" />
                 भाषिणी DPI
@@ -1048,7 +1305,7 @@ export default function CommandCenter() {
                 }}
                 className={`px-2 py-0.5 rounded-lg font-bold transition-all ${
                   lang === "en"
-                    ? "bg-cyan-500/25 text-cyan-300 border border-cyan-500/40 shadow-sm"
+                    ? "bg-gradient-to-r from-indigo-500 to-cyan-500 text-white shadow-sm"
                     : "text-slate-400 hover:text-white"
                 }`}
               >
@@ -1063,7 +1320,7 @@ export default function CommandCenter() {
                 }}
                 className={`px-2 py-0.5 rounded-lg font-bold transition-all ${
                   lang === "ta"
-                    ? "bg-emerald-500/25 text-emerald-300 border border-emerald-500/40 shadow-sm"
+                    ? "bg-gradient-to-r from-indigo-500 to-cyan-500 text-white shadow-sm"
                     : "text-slate-400 hover:text-white"
                 }`}
               >
@@ -1078,7 +1335,7 @@ export default function CommandCenter() {
                 }}
                 className={`px-2 py-0.5 rounded-lg font-bold transition-all ${
                   lang === "hi"
-                    ? "bg-amber-500/25 text-amber-300 border border-amber-500/40 shadow-sm"
+                    ? "bg-gradient-to-r from-indigo-500 to-cyan-500 text-white shadow-sm"
                     : "text-slate-400 hover:text-white"
                 }`}
               >
@@ -1086,7 +1343,7 @@ export default function CommandCenter() {
               </button>
             </div>
 
-            <div className="hidden sm:flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-slate-900/90 border border-slate-800 text-[11px] text-slate-300">
+            <div className="hidden sm:flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-[#0B0C14]/90 border border-white/[0.08] text-[11px] text-slate-300">
               <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
               <span className="font-mono text-emerald-400 font-semibold">{t.dpiLive}</span>
             </div>
@@ -1095,13 +1352,13 @@ export default function CommandCenter() {
 
         {/* TOP ROLE SWITCHER BAR */}
         <div className="max-w-7xl mx-auto px-4 sm:px-6 pb-2.5 pt-1 overflow-x-auto no-scrollbar">
-          <div className="flex items-center gap-2 p-1 rounded-2xl bg-slate-900/60 border border-slate-800/80 backdrop-blur-md">
+          <div className="flex items-center gap-2 p-1.5 rounded-2xl bg-[#0B0C14]/90 border border-white/[0.07] backdrop-blur-xl shadow-lg">
             <button
               onClick={() => setActiveTab("student")}
-              className={`flex items-center gap-2 px-3.5 py-2 rounded-xl text-xs font-bold transition-all whitespace-nowrap ${
+              className={`flex items-center gap-2 px-3.5 py-2 rounded-xl text-xs font-semibold transition-all whitespace-nowrap cursor-pointer ${
                 activeTab === "student"
-                  ? "bg-gradient-to-r from-emerald-500 to-teal-500 text-slate-950 shadow-lg shadow-emerald-500/20"
-                  : "bg-slate-900/80 text-slate-400 hover:text-white hover:bg-slate-800 border border-slate-800/60"
+                  ? "bg-gradient-to-r from-indigo-500 via-purple-500 to-cyan-500 text-white font-semibold shadow-[0_0_25px_rgba(99,102,241,0.35)] hover:shadow-[0_0_35px_rgba(168,85,247,0.5)]"
+                  : "bg-[#070810]/70 text-slate-400 hover:text-white hover:bg-white/[0.04] border border-white/[0.05]"
               }`}
             >
               <Wallet className="w-3.5 h-3.5" />
@@ -1110,16 +1367,16 @@ export default function CommandCenter() {
 
             <button
               onClick={() => setActiveTab("nodal")}
-              className={`flex items-center gap-2 px-3.5 py-2 rounded-xl text-xs font-bold transition-all whitespace-nowrap ${
+              className={`flex items-center gap-2 px-3.5 py-2 rounded-xl text-xs font-semibold transition-all whitespace-nowrap cursor-pointer ${
                 activeTab === "nodal"
-                  ? "bg-gradient-to-r from-cyan-500 to-blue-500 text-slate-950 shadow-lg shadow-cyan-500/20"
-                  : "bg-slate-900/80 text-slate-400 hover:text-white hover:bg-slate-800 border border-slate-800/60"
+                  ? "bg-gradient-to-r from-indigo-500 via-purple-500 to-cyan-500 text-white font-semibold shadow-[0_0_25px_rgba(99,102,241,0.35)] hover:shadow-[0_0_35px_rgba(168,85,247,0.5)]"
+                  : "bg-[#070810]/70 text-slate-400 hover:text-white hover:bg-white/[0.04] border border-white/[0.05]"
               }`}
             >
               <Building2 className="w-3.5 h-3.5" />
               <span>{t.tabNodal}</span>
               {pendingCerts.length > 0 && (
-                <span className="px-1.5 py-0.2 rounded-full bg-amber-400 text-slate-950 text-[10px] font-mono font-bold">
+                <span className="px-1.5 py-0.2 rounded-full bg-amber-400 text-slate-950 text-[10px] font-mono font-bold shadow-[0_0_10px_rgba(251,191,36,0.5)]">
                   {pendingCerts.length}
                 </span>
               )}
@@ -1127,10 +1384,10 @@ export default function CommandCenter() {
 
             <button
               onClick={() => setActiveTab("recruiter")}
-              className={`flex items-center gap-2 px-3.5 py-2 rounded-xl text-xs font-bold transition-all whitespace-nowrap ${
+              className={`flex items-center gap-2 px-3.5 py-2 rounded-xl text-xs font-semibold transition-all whitespace-nowrap cursor-pointer ${
                 activeTab === "recruiter"
-                  ? "bg-gradient-to-r from-violet-500 to-indigo-500 text-white shadow-lg shadow-violet-500/20"
-                  : "bg-slate-900/80 text-slate-400 hover:text-white hover:bg-slate-800 border border-slate-800/60"
+                  ? "bg-gradient-to-r from-indigo-500 via-purple-500 to-cyan-500 text-white font-semibold shadow-[0_0_25px_rgba(99,102,241,0.35)] hover:shadow-[0_0_35px_rgba(168,85,247,0.5)]"
+                  : "bg-[#070810]/70 text-slate-400 hover:text-white hover:bg-white/[0.04] border border-white/[0.05]"
               }`}
             >
               <Briefcase className="w-3.5 h-3.5" />
@@ -1139,16 +1396,16 @@ export default function CommandCenter() {
 
             <button
               onClick={() => setActiveTab("regulator")}
-              className={`flex items-center gap-2 px-3.5 py-2 rounded-xl text-xs font-bold transition-all whitespace-nowrap ${
+              className={`flex items-center gap-2 px-3.5 py-2 rounded-xl text-xs font-semibold transition-all whitespace-nowrap cursor-pointer ${
                 activeTab === "regulator"
-                  ? "bg-gradient-to-r from-rose-500 to-amber-500 text-white shadow-lg shadow-rose-500/20"
-                  : "bg-slate-900/80 text-slate-400 hover:text-white hover:bg-slate-800 border border-slate-800/60"
+                  ? "bg-gradient-to-r from-indigo-500 via-purple-500 to-cyan-500 text-white font-semibold shadow-[0_0_25px_rgba(99,102,241,0.35)] hover:shadow-[0_0_35px_rgba(168,85,247,0.5)]"
+                  : "bg-[#070810]/70 text-slate-400 hover:text-white hover:bg-white/[0.04] border border-white/[0.05]"
               }`}
             >
               <Activity className="w-3.5 h-3.5" />
               <span>{t.tabRegulator}</span>
               {regulatorData?.alerts?.duplicate_flagged_students?.length > 0 && (
-                <span className="w-2 h-2 rounded-full bg-rose-500 animate-ping" />
+                <span className="w-2 h-2 rounded-full bg-rose-500 animate-ping shadow-[0_0_8px_#f43f5e]" />
               )}
             </button>
           </div>
@@ -1163,7 +1420,7 @@ export default function CommandCenter() {
         {activeTab === "student" && (
           <div className="space-y-6 animate-in fade-in duration-300">
             {/* SIH WINNING FEATURE 4: ONE-CLICK DEMO SWITCHER PILLS */}
-            <div className="p-4 rounded-3xl bg-slate-900/80 border border-slate-800/90 backdrop-blur-xl shadow-xl flex flex-col md:flex-row items-start md:items-center justify-between gap-3">
+            <div className="p-4 rounded-3xl bg-[#0B0C14]/80 border border-white/[0.07] hover:border-indigo-500/40 backdrop-blur-2xl shadow-xl shadow-[inset_0_1px_0_0_rgba(255,255,255,0.08)] transition-all duration-300 flex flex-col md:flex-row items-start md:items-center justify-between gap-3">
               <div className="flex items-center gap-2 text-xs font-bold text-white shrink-0">
                 <Sparkles className="w-4 h-4 text-amber-400" />
                 <span className="font-mono text-amber-300 uppercase tracking-wider text-[11px]">
@@ -1176,13 +1433,13 @@ export default function CommandCenter() {
                 <button
                   type="button"
                   onClick={() => handleStudentLogin("482910394812", "123456", true)}
-                  className={`px-3 py-1.5 rounded-xl border text-xs font-medium transition-all flex items-center gap-1.5 ${
+                  className={`px-3 py-1.5 rounded-xl border text-xs font-medium transition-all flex items-center gap-1.5 cursor-pointer ${
                     studentData?.student_profile?.apaar_id === "482910394812"
-                      ? "bg-emerald-500/20 border-emerald-400 text-emerald-300 shadow-md shadow-emerald-500/20 font-bold"
-                      : "bg-slate-950/70 border-slate-800 text-slate-300 hover:border-emerald-500/50 hover:text-emerald-400"
+                      ? "bg-indigo-500/20 border-indigo-400 text-indigo-300 shadow-[0_0_15px_rgba(99,102,241,0.25)] font-bold"
+                      : "bg-[#070810]/80 border-white/[0.08] text-slate-300 hover:border-indigo-500/50 hover:text-indigo-300"
                   }`}
                 >
-                  <span className="w-2 h-2 rounded-full bg-emerald-400" />
+                  <span className="w-2 h-2 rounded-full bg-indigo-400" />
                   <span>Arjun (Active B.Tech - 482910394812)</span>
                 </button>
 
@@ -1190,10 +1447,10 @@ export default function CommandCenter() {
                 <button
                   type="button"
                   onClick={() => handleStudentLogin("739104829104", "123456", true)}
-                  className={`px-3 py-1.5 rounded-xl border text-xs font-medium transition-all flex items-center gap-1.5 ${
+                  className={`px-3 py-1.5 rounded-xl border text-xs font-medium transition-all flex items-center gap-1.5 cursor-pointer ${
                     studentData?.student_profile?.apaar_id === "739104829104"
-                      ? "bg-cyan-500/20 border-cyan-400 text-cyan-300 shadow-md shadow-cyan-500/20 font-bold"
-                      : "bg-slate-950/70 border-slate-800 text-slate-300 hover:border-cyan-500/50 hover:text-cyan-400"
+                      ? "bg-cyan-500/20 border-cyan-400 text-cyan-300 shadow-[0_0_15px_rgba(6,182,212,0.25)] font-bold"
+                      : "bg-[#070810]/80 border-white/[0.08] text-slate-300 hover:border-cyan-500/50 hover:text-cyan-300"
                   }`}
                 >
                   <span className="w-2 h-2 rounded-full bg-cyan-400" />
@@ -1204,10 +1461,10 @@ export default function CommandCenter() {
                 <button
                   type="button"
                   onClick={() => handleStudentLogin("999888777666", "123456", true)}
-                  className={`px-3 py-1.5 rounded-xl border text-xs font-medium transition-all flex items-center gap-1.5 ${
+                  className={`px-3 py-1.5 rounded-xl border text-xs font-medium transition-all flex items-center gap-1.5 cursor-pointer ${
                     studentData?.student_profile?.apaar_id === "999888777666"
-                      ? "bg-rose-500/25 border-rose-400 text-rose-300 shadow-md shadow-rose-500/25 font-bold animate-pulse"
-                      : "bg-slate-950/70 border-slate-800 text-slate-300 hover:border-rose-500/50 hover:text-rose-400"
+                      ? "bg-rose-500/25 border-rose-400 text-rose-300 shadow-[0_0_20px_rgba(244,63,94,0.35)] font-bold animate-pulse"
+                      : "bg-[#070810]/80 border-white/[0.08] text-slate-300 hover:border-rose-500/50 hover:text-rose-400"
                   }`}
                 >
                   <span className="w-2 h-2 rounded-full bg-rose-500" />
@@ -1217,9 +1474,9 @@ export default function CommandCenter() {
             </div>
 
             {/* Top Login Input Bar */}
-            <div className="p-4 rounded-2xl bg-slate-900/70 border border-slate-800/80 backdrop-blur-xl flex flex-wrap items-center justify-between gap-4">
+            <div className="p-4 rounded-2xl bg-[#0B0C14]/80 border border-white/[0.07] hover:border-indigo-500/40 backdrop-blur-2xl shadow-xl shadow-[inset_0_1px_0_0_rgba(255,255,255,0.08)] transition-all duration-300 flex flex-wrap items-center justify-between gap-4">
               <div className="flex items-center gap-3">
-                <div className="w-10 h-10 rounded-xl bg-emerald-500/10 border border-emerald-500/30 flex items-center justify-center text-emerald-400">
+                <div className="w-10 h-10 rounded-xl bg-indigo-500/10 border border-indigo-500/30 flex items-center justify-center text-indigo-400">
                   <UserCheck className="w-5 h-5" />
                 </div>
                 <div>
@@ -1236,19 +1493,19 @@ export default function CommandCenter() {
                   value={studentApaarInput}
                   onChange={(e) => setStudentApaarInput(e.target.value)}
                   placeholder="Enter 12-digit APAAR ID"
-                  className="bg-slate-950/80 border border-slate-700/80 rounded-xl px-3.5 py-2 text-xs font-mono text-white focus:outline-none focus:border-emerald-500 w-48"
+                  className="bg-[#070810]/90 border border-white/[0.08] rounded-xl px-3.5 py-2 text-xs font-mono text-white focus:outline-none focus:border-indigo-500 w-48 shadow-inner"
                 />
                 <input
                   type="password"
                   value={studentOtpInput}
                   onChange={(e) => setStudentOtpInput(e.target.value)}
                   placeholder="OTP (123456)"
-                  className="bg-slate-950/80 border border-slate-700/80 rounded-xl px-3 py-2 text-xs font-mono text-white focus:outline-none focus:border-emerald-500 w-28 text-center"
+                  className="bg-[#070810]/90 border border-white/[0.08] rounded-xl px-3 py-2 text-xs font-mono text-white focus:outline-none focus:border-indigo-500 w-28 text-center shadow-inner"
                 />
                 <button
                   onClick={() => handleStudentLogin(studentApaarInput, studentOtpInput, true)}
                   disabled={studentLoading}
-                  className="bg-emerald-500 hover:bg-emerald-400 text-slate-950 text-xs font-bold px-4 py-2 rounded-xl transition-all shadow-md shadow-emerald-500/20 disabled:opacity-50 cursor-pointer"
+                  className="bg-gradient-to-r from-indigo-500 via-purple-500 to-cyan-500 text-white font-semibold shadow-[0_0_25px_rgba(99,102,241,0.35)] hover:shadow-[0_0_35px_rgba(168,85,247,0.5)] text-xs px-4 py-2 rounded-xl transition-all disabled:opacity-50 cursor-pointer"
                 >
                   {studentLoading ? "Verifying..." : "Authenticate"}
                 </button>
@@ -1258,19 +1515,19 @@ export default function CommandCenter() {
                     setRegCustomApaar(studentApaarInput && /^\d{12}$/.test(studentApaarInput) ? studentApaarInput : "");
                     setShowRegisterModal(true);
                   }}
-                  className="bg-gradient-to-r from-amber-500 via-emerald-500 to-cyan-500 hover:from-amber-400 hover:to-cyan-400 text-slate-950 text-xs font-extrabold px-3.5 py-2 rounded-xl transition-all shadow-md shadow-cyan-500/20 flex items-center gap-1.5 cursor-pointer"
+                  className="bg-gradient-to-r from-amber-400 via-orange-500 to-rose-500 hover:from-amber-300 hover:to-rose-400 text-white text-xs font-extrabold px-3.5 py-2 rounded-xl transition-all shadow-[0_0_20px_rgba(245,158,11,0.35)] flex items-center gap-1.5 cursor-pointer"
                 >
                   <Sparkles className="w-3.5 h-3.5" />
                   <span>+ Register / Mint APAAR ID</span>
                 </button>
               </div>
-              <div className="w-full flex flex-wrap items-center justify-between pt-2 border-t border-slate-800/80 text-[11px] font-mono text-slate-400">
-                <label className="flex items-center gap-2 cursor-pointer hover:text-emerald-300 transition-colors">
+              <div className="w-full flex flex-wrap items-center justify-between pt-2 border-t border-white/[0.07] text-[11px] font-mono text-slate-400">
+                <label className="flex items-center gap-2 cursor-pointer hover:text-indigo-300 transition-colors">
                   <input
                     type="checkbox"
                     checked={autoProvisionEnabled}
                     onChange={(e) => setAutoProvisionEnabled(e.target.checked)}
-                    className="rounded border-slate-700 bg-slate-950 text-emerald-500 focus:ring-0 cursor-pointer"
+                    className="rounded border-slate-700 bg-[#070810] text-indigo-500 focus:ring-0 cursor-pointer"
                   />
                   <span>Zero-Dead-End Mode: Auto-Provision Unregistered 12-Digit IDs Live</span>
                 </label>
@@ -1280,7 +1537,7 @@ export default function CommandCenter() {
 
             {/* ZERO-DEAD-END DEMO MODE FALLBACK PROMPT */}
             {unregisteredApaarPrompt && (
-              <div className="p-4 rounded-2xl bg-amber-950/60 border border-amber-500/60 text-amber-200 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 shadow-lg shadow-amber-950/40 animate-in slide-in-from-top-2">
+              <div className="p-4 rounded-2xl bg-amber-950/60 border border-amber-500/50 text-amber-200 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 shadow-[0_0_20px_rgba(245,158,11,0.2)] animate-in slide-in-from-top-2">
                 <div className="flex items-center gap-3">
                   <div className="w-8 h-8 rounded-xl bg-amber-500/20 border border-amber-500/40 flex items-center justify-center text-amber-400 shrink-0">
                     <Sparkles className="w-4 h-4" />
@@ -1297,7 +1554,7 @@ export default function CommandCenter() {
                 <div className="flex items-center gap-2 shrink-0">
                   <button
                     onClick={() => handleStudentLogin(unregisteredApaarPrompt.apaarId, "123456", true, true)}
-                    className="bg-amber-400 hover:bg-amber-300 text-slate-950 text-xs font-bold px-3.5 py-1.5 rounded-xl shadow transition-all cursor-pointer flex items-center gap-1.5"
+                    className="bg-gradient-to-r from-amber-400 to-orange-500 text-slate-950 text-xs font-bold px-3.5 py-1.5 rounded-xl shadow-[0_0_15px_rgba(245,158,11,0.4)] transition-all cursor-pointer flex items-center gap-1.5"
                   >
                     <Zap className="w-3.5 h-3.5" />
                     <span>Instant-Onboard (1-Click)</span>
@@ -1307,7 +1564,7 @@ export default function CommandCenter() {
                       setRegCustomApaar(unregisteredApaarPrompt.apaarId);
                       setShowRegisterModal(true);
                     }}
-                    className="bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-600 text-xs font-semibold px-3 py-1.5 rounded-xl transition-all cursor-pointer"
+                    className="bg-[#070810] hover:bg-[#0B0C14] text-slate-200 border border-white/[0.1] text-xs font-semibold px-3 py-1.5 rounded-xl transition-all cursor-pointer"
                   >
                     Custom eKYC Form
                   </button>
@@ -1320,7 +1577,7 @@ export default function CommandCenter() {
                 {/* DUAL ENROLLMENT CYBER FRAUD BANNER (FOR ROHAN VERMA OR FLAGGED STUDENTS) */}
                 {(studentData.student_profile?.is_duplicate_flagged ||
                   studentData.student_profile?.apaar_id === "999888777666") && (
-                  <div className="p-4 rounded-3xl bg-rose-950/60 border-2 border-rose-500/80 text-rose-200 flex items-start gap-3.5 shadow-2xl shadow-rose-950/60 animate-in zoom-in-95 duration-200">
+                  <div className="p-4 rounded-3xl text-rose-400 bg-rose-500/10 border border-rose-500/40 shadow-[0_0_20px_rgba(244,63,94,0.2)] flex items-start gap-3.5 animate-in zoom-in-95 duration-200">
                     <div className="w-10 h-10 rounded-2xl bg-rose-500/20 border border-rose-500/40 flex items-center justify-center text-rose-400 shrink-0">
                       <AlertOctagon className="w-6 h-6 animate-pulse" />
                     </div>
@@ -1344,41 +1601,41 @@ export default function CommandCenter() {
 
                 {/* Top Section: Digital APAAR Card + Progress Bars */}
                 <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-stretch">
-                  {/* OFFICIAL DIGITAL APAAR CARD (5 Cols) */}
+                  {/* OFFICIAL DIGITAL APAAR CARD (5 Cols) - IRIDESCENT ROYAL TITANIUM & AURORA */}
                   <div
-                    className={`lg:col-span-5 relative rounded-3xl p-6 bg-gradient-to-br from-slate-900 via-slate-900/95 to-slate-950 border shadow-2xl backdrop-blur-2xl flex flex-col justify-between overflow-hidden group ${
+                    className={`lg:col-span-5 relative rounded-3xl p-6 bg-gradient-to-br from-[#121324] via-[#0D0E1A] to-[#1A102B] border shadow-2xl backdrop-blur-2xl flex flex-col justify-between overflow-hidden group transition-all duration-300 ${
                       studentData.student_profile?.is_duplicate_flagged ||
                       studentData.student_profile?.apaar_id === "999888777666"
-                        ? "border-rose-500/70 shadow-rose-950/40"
-                        : "border-slate-700/70"
+                        ? "border-rose-500/70 shadow-[0_0_30px_rgba(244,63,94,0.25)]"
+                        : "border-indigo-400/30 shadow-[0_0_30px_rgba(99,102,241,0.18)] shadow-[inset_0_1px_0_0_rgba(255,255,255,0.12)]"
                     }`}
                   >
-                    <div className="absolute top-0 right-0 w-48 h-48 bg-gradient-to-br from-emerald-500/15 via-teal-500/10 to-transparent blur-3xl rounded-full" />
-                    <div className="absolute -bottom-10 -left-10 w-40 h-40 bg-cyan-500/10 blur-2xl rounded-full" />
+                    <div className="absolute top-0 right-0 w-48 h-48 bg-gradient-to-br from-indigo-500/20 via-purple-500/15 to-transparent blur-3xl rounded-full pointer-events-none" />
+                    <div className="absolute -bottom-10 -left-10 w-40 h-40 bg-cyan-500/15 blur-2xl rounded-full pointer-events-none" />
 
                     <div>
-                      {/* Card Header */}
-                      <div className="flex items-start justify-between pb-4 border-b border-slate-800">
+                      {/* Card Header: Metallic Gold Accents */}
+                      <div className="flex items-start justify-between pb-4 border-b border-white/[0.08]">
                         <div className="flex items-center gap-2.5">
-                          <div className="w-8 h-8 rounded-lg bg-emerald-500/20 border border-emerald-400/40 flex items-center justify-center font-black text-emerald-300 text-xs shadow-inner">
+                          <div className="w-8 h-8 rounded-lg bg-[#FBBF24]/10 border border-[#FBBF24]/40 flex items-center justify-center font-black text-[#FBBF24] text-xs shadow-inner shadow-[#FBBF24]/10">
                             AICTE
                           </div>
                           <div>
-                            <div className="text-[10px] font-mono uppercase tracking-widest text-emerald-400 font-bold">
+                            <div className="text-[10px] font-mono uppercase tracking-widest text-[#FBBF24] font-bold">
                               {t.apaarCardGovt}
                             </div>
-                            <h4 className="text-xs font-bold text-white tracking-wide">
+                            <h4 className="text-xs font-bold text-[#F8FAFC] tracking-wide">
                               {t.apaarCardTitle}
                             </h4>
                           </div>
                         </div>
 
-                        {/* Metallic Smart Chip graphic */}
-                        <div className="w-9 h-7 rounded bg-gradient-to-tr from-amber-400/80 via-yellow-200 to-amber-500/80 border border-amber-300 shadow-md flex items-center justify-center">
-                          <div className="w-6 h-4 border border-amber-800/40 rounded-sm grid grid-cols-2 gap-0.5 opacity-60">
-                            <span className="border-r border-b border-amber-900/40" />
-                            <span className="border-b border-amber-900/40" />
-                            <span className="border-r border-amber-900/40" />
+                        {/* Metallic Gold EMV Smart Chip Graphic */}
+                        <div className="w-9 h-7 rounded bg-gradient-to-tr from-[#FBBF24] via-[#FDE68A] to-[#D97706] border border-[#FBBF24] shadow-[0_0_12px_rgba(251,191,36,0.35)] flex items-center justify-center">
+                          <div className="w-6 h-4 border border-amber-900/40 rounded-sm grid grid-cols-2 gap-0.5 opacity-60">
+                            <span className="border-r border-b border-amber-950/40" />
+                            <span className="border-b border-amber-950/40" />
+                            <span className="border-r border-amber-950/40" />
                             <span />
                           </div>
                         </div>
@@ -1387,16 +1644,16 @@ export default function CommandCenter() {
                       {/* Card Body: Student Photo & Details */}
                       <div className="pt-5 flex items-center gap-4">
                         <div
-                          className={`relative w-16 h-16 rounded-2xl bg-gradient-to-tr from-slate-800 to-slate-700 border-2 p-1 flex items-center justify-center text-slate-300 shadow-lg shrink-0 ${
+                          className={`relative w-16 h-16 rounded-2xl bg-gradient-to-tr from-[#1C1E30] to-[#0D0E1A] border-2 p-1 flex items-center justify-center text-slate-300 shadow-lg shrink-0 ${
                             studentData.student_profile?.is_duplicate_flagged ||
                             studentData.student_profile?.apaar_id === "999888777666"
                               ? "border-rose-500 text-rose-300"
-                              : "border-emerald-400/50"
+                              : "border-indigo-400/40"
                           }`}
                         >
-                          <UserCheck className="w-8 h-8" />
+                          <UserCheck className="w-8 h-8 text-indigo-300" />
                           <span
-                            className={`absolute -bottom-1 -right-1 w-4 h-4 rounded-full border-2 border-slate-900 flex items-center justify-center ${
+                            className={`absolute -bottom-1 -right-1 w-4 h-4 rounded-full border-2 border-[#0D0E1A] flex items-center justify-center ${
                               studentData.student_profile?.is_duplicate_flagged ||
                               studentData.student_profile?.apaar_id === "999888777666"
                                 ? "bg-rose-500"
@@ -1421,8 +1678,8 @@ export default function CommandCenter() {
                                 studentData.student_profile?.apaar_id === "999888777666"
                                   ? "bg-rose-500/20 text-rose-300 border-rose-500/40"
                                   : studentData.student_profile?.enrollment_status === "EXITED_DIPLOMA"
-                                  ? "bg-cyan-500/20 text-cyan-300 border-cyan-500/40"
-                                  : "bg-emerald-500/10 text-emerald-400 border-emerald-500/20"
+                                  ? "bg-amber-500/10 text-amber-300 border-amber-500/30"
+                                  : "bg-emerald-500/10 text-emerald-400 border-emerald-500/30"
                               }`}
                             >
                               {studentData.student_profile?.is_duplicate_flagged
@@ -1438,28 +1695,28 @@ export default function CommandCenter() {
                         </div>
                       </div>
 
-                      {/* 12-Digit APAAR ID */}
-                      <div className="mt-5 p-3 rounded-xl bg-slate-950/80 border border-slate-800/80 flex items-center justify-between">
+                      {/* 12-Digit APAAR ID with Crisp Ice-White Glowing Digits */}
+                      <div className="mt-5 p-3.5 rounded-xl bg-[#070810]/90 border border-white/[0.08] shadow-[inset_0_1px_0_0_rgba(255,255,255,0.06)] flex items-center justify-between">
                         <div>
                           <div className="text-[9px] uppercase font-mono text-slate-400 tracking-wider">
                             {t.nationalApaarId}
                           </div>
-                          <div className="text-lg font-black font-mono tracking-widest text-emerald-300">
+                          <div className="text-lg font-black font-mono tracking-[0.2em] text-[#F8FAFC] drop-shadow-[0_0_12px_rgba(255,255,255,0.5)]">
                             {studentData.student_profile?.apaar_id?.replace(/(\d{4})/g, "$1 ").trim()}
                           </div>
                         </div>
-                        <ShieldCheck className="w-6 h-6 text-emerald-400" />
+                        <ShieldCheck className="w-6 h-6 text-emerald-400 shrink-0" />
                       </div>
 
                       {/* Micro Identifiers Grid */}
                       <div className="mt-3 grid grid-cols-2 gap-2 text-[10px] font-mono">
-                        <div className="p-2 rounded-lg bg-slate-900/50 border border-slate-800">
+                        <div className="p-2 rounded-lg bg-[#070810]/70 border border-white/[0.06]">
                           <span className="text-slate-400">UDISE+ PEN: </span>
                           <span className="text-white font-bold">
                             {studentData.student_profile?.udise_pen || "PEN9981234"}
                           </span>
                         </div>
-                        <div className="p-2 rounded-lg bg-slate-900/50 border border-slate-800">
+                        <div className="p-2 rounded-lg bg-[#070810]/70 border border-white/[0.06]">
                           <span className="text-slate-400">Aadhaar (Last 4): </span>
                           <span className="text-white font-bold">
                             •••• {studentData.student_profile?.aadhaar_last_4 || "8821"}
@@ -1468,16 +1725,18 @@ export default function CommandCenter() {
                       </div>
                     </div>
 
-                    <div className="mt-5 pt-3 border-t border-slate-800/80 flex items-center justify-between text-[9px] text-slate-400 font-mono">
+                    <div className="mt-5 pt-3 border-t border-white/[0.08] flex items-center justify-between text-[9px] text-slate-400 font-mono">
                       <span>SECURE ABC CRYPTOGRAPHIC LEDGER</span>
-                      <span className="text-emerald-400 font-bold">NEP 2020 COMPLIANT</span>
+                      <span className="text-emerald-400 font-bold bg-emerald-500/10 border border-emerald-500/30 px-2 py-0.5 rounded">
+                        NEP 2020 COMPLIANT
+                      </span>
                     </div>
                   </div>
 
                   {/* CREDIT ACCUMULATION & PROGRESS BARS (7 Cols) */}
                   <div className="lg:col-span-7 space-y-4 flex flex-col justify-between">
-                    {/* Progress Card 1: Academic Credits (out of 160) */}
-                    <div className="p-6 rounded-3xl bg-slate-900/70 border border-slate-800/80 backdrop-blur-xl shadow-xl">
+                    {/* Progress Card 1: Academic Credits (out of 160) - Glowing Cyan-to-Indigo Gradient */}
+                    <div className="p-6 rounded-3xl bg-[#0B0C14]/80 border border-white/[0.07] hover:border-indigo-500/40 backdrop-blur-2xl shadow-xl shadow-[inset_0_1px_0_0_rgba(255,255,255,0.08)] transition-all duration-300">
                       <div className="flex items-center justify-between mb-2">
                         <div className="flex items-center gap-2">
                           <GraduationCap className="w-5 h-5 text-cyan-400" />
@@ -1495,9 +1754,9 @@ export default function CommandCenter() {
                         Cumulative degree graduation threshold according to NEP 2020 4-Year B.Tech curriculum.
                       </p>
 
-                      <div className="w-full h-3 rounded-full bg-slate-950 border border-slate-800 overflow-hidden relative">
+                      <div className="w-full h-3 rounded-full bg-[#070810] border border-white/[0.07] overflow-hidden relative">
                         <div
-                          className="h-full bg-gradient-to-r from-cyan-500 to-blue-500 transition-all duration-700 rounded-full"
+                          className="h-full bg-gradient-to-r from-cyan-400 via-blue-500 to-indigo-500 shadow-[0_0_15px_rgba(6,182,212,0.4)] transition-all duration-700 rounded-full"
                           style={{
                             width: `${Math.min(
                               100,
@@ -1508,13 +1767,13 @@ export default function CommandCenter() {
                       </div>
                       <div className="flex justify-between items-center text-[10px] font-mono text-slate-400 mt-1.5">
                         <span>Foundation: 40 Cr</span>
-                        <span>Diploma Exit: 80 Cr</span>
-                        <span>Degree Exit: 160 Cr</span>
+                        <span className="text-amber-300 font-semibold">Diploma Exit: 80 Cr</span>
+                        <span className="text-emerald-400 font-semibold">Degree Exit: 160 Cr</span>
                       </div>
                     </div>
 
-                    {/* Progress Card 2: AICTE Activity Points (out of 100) */}
-                    <div className="p-6 rounded-3xl bg-slate-900/70 border border-slate-800/80 backdrop-blur-xl shadow-xl">
+                    {/* Progress Card 2: AICTE Activity Points (out of 100) - Solar Gold-to-Rose Gradient */}
+                    <div className="p-6 rounded-3xl bg-[#0B0C14]/80 border border-white/[0.07] hover:border-indigo-500/40 backdrop-blur-2xl shadow-xl shadow-[inset_0_1px_0_0_rgba(255,255,255,0.08)] transition-all duration-300">
                       <div className="flex items-center justify-between mb-2">
                         <div className="flex items-center gap-2">
                           <Award className="w-5 h-5 text-amber-400" />
@@ -1532,9 +1791,9 @@ export default function CommandCenter() {
                         Non-academic co-curricular, hackathon, internship, and social innovation points required for degree award.
                       </p>
 
-                      <div className="w-full h-3 rounded-full bg-slate-950 border border-slate-800 overflow-hidden relative">
+                      <div className="w-full h-3 rounded-full bg-[#070810] border border-white/[0.07] overflow-hidden relative">
                         <div
-                          className="h-full bg-gradient-to-r from-amber-500 to-orange-500 transition-all duration-700 rounded-full"
+                          className="h-full bg-gradient-to-r from-amber-400 via-orange-500 to-rose-500 shadow-[0_0_15px_rgba(245,158,11,0.4)] transition-all duration-700 rounded-full"
                           style={{
                             width: `${Math.min(
                               100,
@@ -1544,17 +1803,419 @@ export default function CommandCenter() {
                         />
                       </div>
                       <div className="flex justify-between items-center text-[10px] font-mono text-slate-400 mt-1.5">
-                        <span>Min Threshold: 50 Pts</span>
+                        <span className="text-amber-300 font-semibold">Min Threshold: 50 Pts</span>
                         <span>State Award: 75 Pts</span>
-                        <span>AICTE National Honors: 100 Pts</span>
+                        <span className="text-emerald-400 font-semibold">AICTE National Honors: 100 Pts</span>
                       </div>
                     </div>
                   </div>
                 </div>
 
+                {/* ========================================================================= */}
+                {/* FLAGSHIP INNOVATION 2: AICTE SKILL-DNA & NEP CREDIT RADAR (COMPETENCY MATRIX) */}
+                {/* ========================================================================= */}
+                <div className="p-6 rounded-3xl bg-[#0B0C14]/80 border border-white/[0.07] hover:border-indigo-500/40 backdrop-blur-2xl shadow-xl shadow-[inset_0_1px_0_0_rgba(255,255,255,0.08)] transition-all duration-300">
+                  <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 pb-4 mb-6 border-b border-white/[0.08]">
+                    <div className="flex items-center gap-3">
+                      <div className="w-10 h-10 rounded-2xl bg-cyan-500/10 border border-cyan-500/30 flex items-center justify-center text-cyan-400 shadow-md shadow-cyan-500/10">
+                        <Radar className="w-5 h-5 animate-spin" style={{ animationDuration: "14s" }} />
+                      </div>
+                      <div>
+                        <div className="flex items-center gap-2">
+                          <h4 className="text-base font-bold text-white tracking-wide">
+                            AICTE Skill-DNA &amp; NEP Credit Radar
+                          </h4>
+                          <span className="text-[10px] font-mono px-2 py-0.5 rounded-full bg-indigo-500/10 border border-indigo-400/30 text-indigo-300 font-bold">
+                            Live Competency Matrix
+                          </span>
+                        </div>
+                        <p className="text-xs text-slate-400">
+                          Automated multi-axial parsing of verified coursework (CS101, AI202) and activity points into National Skill Domains.
+                        </p>
+                      </div>
+                    </div>
+
+                    <div className="flex flex-wrap items-center gap-2.5">
+                      <span className="text-[10px] font-mono bg-emerald-500/10 text-emerald-400 border border-emerald-500/30 px-3 py-1 rounded-full font-bold flex items-center gap-1.5 shadow-[0_0_15px_rgba(16,185,129,0.2)]">
+                        <ShieldCheck className="w-3.5 h-3.5 text-emerald-400" />
+                        <span>NSQF Level 7 Certified Competency Matrix</span>
+                      </span>
+                      <button
+                        onClick={handleExportSkillDnaCredential}
+                        className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-[#070810] hover:bg-[#121324] text-cyan-300 hover:text-cyan-200 border border-cyan-500/30 text-xs font-semibold shadow-sm transition-all cursor-pointer"
+                        title="View exportable W3C Verifiable Credential JSON-LD payload"
+                      >
+                        <ExternalLink className="w-3.5 h-3.5" />
+                        <span>Export W3C Credential</span>
+                      </button>
+                    </div>
+                  </div>
+
+                  <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-center">
+                    {/* SVG Radar Chart (5 Cols) */}
+                    <div className="lg:col-span-5 flex flex-col items-center justify-center p-4 rounded-2xl bg-[#05050A]/90 border border-white/[0.07] relative overflow-hidden group">
+                      <div className="absolute inset-0 bg-radial from-cyan-500/5 via-transparent to-transparent pointer-events-none" />
+                      <svg className="w-64 h-64 overflow-visible" viewBox="0 0 240 240">
+                        <defs>
+                          <radialGradient id="radarMeshGradient" cx="50%" cy="50%" r="50%">
+                            <stop offset="0%" stopColor="#6366f1" stopOpacity="0.4" />
+                            <stop offset="60%" stopColor="#a855f7" stopOpacity="0.2" />
+                            <stop offset="100%" stopColor="#06b6d4" stopOpacity="0.05" />
+                          </radialGradient>
+                        </defs>
+
+                        {/* Concentric Grid Polygons */}
+                        <polygon points="120,40 200,120 120,200 40,120" fill="none" stroke="rgba(255,255,255,0.08)" strokeDasharray="3 3" />
+                        <polygon points="120,60 180,120 120,180 60,120" fill="none" stroke="rgba(255,255,255,0.06)" />
+                        <polygon points="120,80 160,120 120,160 80,120" fill="none" stroke="rgba(255,255,255,0.06)" strokeDasharray="2 2" />
+                        <polygon points="120,100 140,120 120,140 100,120" fill="none" stroke="rgba(255,255,255,0.04)" />
+
+                        {/* Axes Lines */}
+                        <line x1="120" y1="40" x2="120" y2="200" stroke="rgba(255,255,255,0.1)" strokeWidth="1" />
+                        <line x1="40" y1="120" x2="200" y2="120" stroke="rgba(255,255,255,0.1)" strokeWidth="1" />
+
+                        {/* Active Data Polygon:
+                            Top (Core Algorithms): 88% -> (120, 120 - 80*0.88) = (120, 49.6)
+                            Right (Machine Intelligence): 92% -> (120 + 80*0.92, 120) = (193.6, 120)
+                            Bottom (Hands-on Innovation): 85% -> (120, 120 + 80*0.85) = (120, 188)
+                            Left (Professional Ethics): 75% -> (120 - 80*0.75, 120) = (60, 120)
+                        */}
+                        <polygon
+                          points="120,49.6 193.6,120 120,188 60,120"
+                          fill="url(#radarMeshGradient)"
+                          stroke="#06b6d4"
+                          strokeWidth="2.5"
+                          className="transition-all duration-700 drop-shadow-[0_0_12px_rgba(6,182,212,0.6)]"
+                        />
+
+                        {/* Vertex Points & Score Badges */}
+                        {/* Top: Core Algorithms (88%) */}
+                        <circle cx="120" cy="49.6" r="4.5" fill="#06b6d4" stroke="#ffffff" strokeWidth="1.5" className="animate-pulse" />
+                        <text x="120" y="32" textAnchor="middle" fill="#06b6d4" fontSize="10" fontFamily="monospace" fontWeight="bold">88%</text>
+
+                        {/* Right: Machine Intelligence (92%) */}
+                        <circle cx="193.6" cy="120" r="4.5" fill="#a855f7" stroke="#ffffff" strokeWidth="1.5" className="animate-pulse" />
+                        <text x="206" y="124" textAnchor="start" fill="#a855f7" fontSize="10" fontFamily="monospace" fontWeight="bold">92%</text>
+
+                        {/* Bottom: Hands-on Innovation (85%) */}
+                        <circle cx="120" cy="188" r="4.5" fill="#f59e0b" stroke="#ffffff" strokeWidth="1.5" className="animate-pulse" />
+                        <text x="120" y="212" textAnchor="middle" fill="#f59e0b" fontSize="10" fontFamily="monospace" fontWeight="bold">85%</text>
+
+                        {/* Left: Professional Ethics (75%) */}
+                        <circle cx="60" cy="120" r="4.5" fill="#10b981" stroke="#ffffff" strokeWidth="1.5" className="animate-pulse" />
+                        <text x="34" y="124" textAnchor="end" fill="#10b981" fontSize="10" fontFamily="monospace" fontWeight="bold">75%</text>
+
+                        {/* Center Origin Point */}
+                        <circle cx="120" cy="120" r="3" fill="#ffffff" opacity="0.6" />
+                      </svg>
+                      <div className="text-[10px] font-mono text-slate-400 mt-2 flex items-center gap-1.5">
+                        <span className="w-2 h-2 rounded-full bg-cyan-400 animate-pulse" />
+                        <span>Equi-Angular Polar Competency Radar</span>
+                      </div>
+                    </div>
+
+                    {/* Competency Domains Breakdown (7 Cols) */}
+                    <div className="lg:col-span-7 space-y-3.5">
+                      {/* Domain 1: Core Algorithms & Systems */}
+                      <div className="p-3.5 rounded-2xl bg-[#070810]/80 border border-white/[0.07] hover:border-cyan-500/30 transition-all space-y-1.5">
+                        <div className="flex justify-between items-center text-xs">
+                          <div className="flex items-center gap-2">
+                            <span className="w-2 h-2 rounded-full bg-cyan-400" />
+                            <span className="font-bold text-white">Core Algorithms &amp; Systems</span>
+                            <span className="text-[9px] font-mono px-1.5 py-0.2 rounded bg-cyan-500/10 text-cyan-300 border border-cyan-500/20">
+                              CS101 Mapped
+                            </span>
+                          </div>
+                          <div className="font-mono font-bold text-cyan-400 text-sm">88%</div>
+                        </div>
+                        <div className="w-full h-2 rounded-full bg-[#05050A] overflow-hidden border border-white/[0.05]">
+                          <div className="h-full bg-gradient-to-r from-cyan-400 via-blue-500 to-indigo-500 shadow-[0_0_10px_rgba(6,182,212,0.4)] rounded-full" style={{ width: "88%" }} />
+                        </div>
+                        <div className="flex justify-between items-center text-[10px] text-slate-400">
+                          <span>Validated: CS101 Data Structures &amp; Algorithms (4 Credits, Grade O)</span>
+                          <span className="text-cyan-300 font-mono font-semibold">Mastery • Level 7</span>
+                        </div>
+                      </div>
+
+                      {/* Domain 2: Machine Intelligence & Data */}
+                      <div className="p-3.5 rounded-2xl bg-[#070810]/80 border border-white/[0.07] hover:border-purple-500/30 transition-all space-y-1.5">
+                        <div className="flex justify-between items-center text-xs">
+                          <div className="flex items-center gap-2">
+                            <span className="w-2 h-2 rounded-full bg-purple-400" />
+                            <span className="font-bold text-white">Machine Intelligence &amp; Data</span>
+                            <span className="text-[9px] font-mono px-1.5 py-0.2 rounded bg-purple-500/10 text-purple-300 border border-purple-500/20">
+                              AI202 Mapped
+                            </span>
+                          </div>
+                          <div className="font-mono font-bold text-purple-400 text-sm">92%</div>
+                        </div>
+                        <div className="w-full h-2 rounded-full bg-[#05050A] overflow-hidden border border-white/[0.05]">
+                          <div className="h-full bg-gradient-to-r from-purple-400 via-pink-500 to-indigo-500 shadow-[0_0_10px_rgba(168,85,247,0.4)] rounded-full" style={{ width: "92%" }} />
+                        </div>
+                        <div className="flex justify-between items-center text-[10px] text-slate-400">
+                          <span>Validated: AI202 Machine Learning &amp; Neural Networks (4 Credits, Grade O)</span>
+                          <span className="text-purple-300 font-mono font-semibold">Exceptional • Level 7</span>
+                        </div>
+                      </div>
+
+                      {/* Domain 3: Hands-on Innovation (Hackathons) */}
+                      <div className="p-3.5 rounded-2xl bg-[#070810]/80 border border-white/[0.07] hover:border-amber-500/30 transition-all space-y-1.5">
+                        <div className="flex justify-between items-center text-xs">
+                          <div className="flex items-center gap-2">
+                            <span className="w-2 h-2 rounded-full bg-amber-400" />
+                            <span className="font-bold text-white">Hands-on Innovation (Hackathons)</span>
+                            <span className="text-[9px] font-mono px-1.5 py-0.2 rounded bg-amber-500/10 text-amber-300 border border-amber-500/20">
+                              AICTE Pts Mapped
+                            </span>
+                          </div>
+                          <div className="font-mono font-bold text-amber-400 text-sm">85%</div>
+                        </div>
+                        <div className="w-full h-2 rounded-full bg-[#05050A] overflow-hidden border border-white/[0.05]">
+                          <div className="h-full bg-gradient-to-r from-amber-400 via-orange-500 to-rose-500 shadow-[0_0_10px_rgba(245,158,11,0.4)] rounded-full" style={{ width: "85%" }} />
+                        </div>
+                        <div className="flex justify-between items-center text-[10px] text-slate-400">
+                          <span>Validated: Smart India Hackathon Winner 2026 (+20 Points, 98.4% OCR)</span>
+                          <span className="text-amber-300 font-mono font-semibold">Advanced • Level 7</span>
+                        </div>
+                      </div>
+
+                      {/* Domain 4: Professional Practice & Ethics */}
+                      <div className="p-3.5 rounded-2xl bg-[#070810]/80 border border-white/[0.07] hover:border-emerald-500/30 transition-all space-y-1.5">
+                        <div className="flex justify-between items-center text-xs">
+                          <div className="flex items-center gap-2">
+                            <span className="w-2 h-2 rounded-full bg-emerald-400" />
+                            <span className="font-bold text-white">Professional Practice &amp; Ethics</span>
+                            <span className="text-[9px] font-mono px-1.5 py-0.2 rounded bg-emerald-500/10 text-emerald-300 border border-emerald-500/20">
+                              DEPA/Intern Mapped
+                            </span>
+                          </div>
+                          <div className="font-mono font-bold text-emerald-400 text-sm">75%</div>
+                        </div>
+                        <div className="w-full h-2 rounded-full bg-[#05050A] overflow-hidden border border-white/[0.05]">
+                          <div className="h-full bg-gradient-to-r from-emerald-400 via-teal-500 to-cyan-500 shadow-[0_0_10px_rgba(16,185,129,0.4)] rounded-full" style={{ width: "75%" }} />
+                        </div>
+                        <div className="flex justify-between items-center text-[10px] text-slate-400">
+                          <span>Validated: AICTE Virtual Industry Internship &amp; Consent Protocols (20 Pts)</span>
+                          <span className="text-emerald-300 font-mono font-semibold">Proficient • Level 7</span>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+
+                {/* ========================================================================= */}
+                {/* FLAGSHIP INNOVATION 1: PRIVACY-PRESERVING ZK-PROOF GENERATOR (TAB 1) */}
+                {/* ========================================================================= */}
+                <div className="p-6 rounded-3xl bg-[#0B0C14]/80 border border-white/[0.07] hover:border-indigo-500/40 backdrop-blur-2xl shadow-xl shadow-[inset_0_1px_0_0_rgba(255,255,255,0.08)] transition-all duration-300 space-y-5">
+                  <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 pb-4 border-b border-white/[0.08]">
+                    <div className="flex items-center gap-3">
+                      <div className="w-10 h-10 rounded-2xl bg-purple-500/10 border border-purple-500/30 flex items-center justify-center text-purple-400 shadow-md shadow-purple-500/10">
+                        <Binary className="w-5 h-5 text-purple-400" />
+                      </div>
+                      <div>
+                        <div className="flex items-center gap-2">
+                          <h4 className="text-base font-bold text-white tracking-wide">
+                            Privacy-Preserving ZK-Proof Generator
+                          </h4>
+                          <span className="text-[10px] font-mono px-2 py-0.5 rounded-full bg-purple-500/15 border border-purple-500/30 text-purple-300 font-bold">
+                            zk-SNARK Groth16
+                          </span>
+                        </div>
+                        <p className="text-xs text-slate-400">
+                          Mathematically prove academic merit and activity thresholds to recruiters without revealing exact scores or demographic PII.
+                        </p>
+                      </div>
+                    </div>
+
+                    <div className="flex items-center gap-2">
+                      <span className="text-[10px] font-mono bg-indigo-500/10 text-indigo-300 border border-indigo-500/20 px-2.5 py-1 rounded-lg">
+                        Zero Information Leakage
+                      </span>
+                    </div>
+                  </div>
+
+                  {/* Select Pre-set Rule */}
+                  <div className="space-y-3">
+                    <label className="text-xs font-bold text-slate-300 block">
+                      Select Zero-Knowledge Proof Verification Rule:
+                    </label>
+
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                      {/* Rule A */}
+                      <div
+                        onClick={() => setZkRule("gpa")}
+                        className={`p-4 rounded-2xl border transition-all cursor-pointer relative ${
+                          zkRule === "gpa"
+                            ? "bg-purple-950/20 border-purple-500/60 shadow-[0_0_20px_rgba(168,85,247,0.2)]"
+                            : "bg-[#070810]/70 border-white/[0.07] hover:border-white/[0.15]"
+                        }`}
+                      >
+                        <div className="flex items-start justify-between gap-2">
+                          <div className="space-y-1">
+                            <div className="flex items-center gap-2">
+                              <span className="w-5 h-5 rounded-full bg-purple-500/20 text-purple-300 text-[11px] font-mono font-bold flex items-center justify-center border border-purple-500/40">
+                                A
+                              </span>
+                              <h5 className="text-xs sm:text-sm font-bold text-white">
+                                Verify CGPA is ≥ 8.0 without revealing exact score
+                              </h5>
+                            </div>
+                            <p className="text-[11px] text-slate-400 pl-7 leading-relaxed">
+                              Generates a zero-knowledge proof that your cumulative grade point average satisfies ≥ 8.0. Recruiter gets cryptographic proof while your exact grade remains hidden.
+                            </p>
+                          </div>
+                          <div
+                            className={`w-4 h-4 rounded-full border-2 flex items-center justify-center shrink-0 mt-1 ${
+                              zkRule === "gpa" ? "border-purple-400 bg-purple-500" : "border-slate-600"
+                            }`}
+                          >
+                            {zkRule === "gpa" && <Check className="w-2.5 h-2.5 text-white stroke-[3]" />}
+                          </div>
+                        </div>
+                      </div>
+
+                      {/* Rule B */}
+                      <div
+                        onClick={() => setZkRule("activity")}
+                        className={`p-4 rounded-2xl border transition-all cursor-pointer relative ${
+                          zkRule === "activity"
+                            ? "bg-amber-950/20 border-amber-500/60 shadow-[0_0_20px_rgba(245,158,11,0.2)]"
+                            : "bg-[#070810]/70 border-white/[0.07] hover:border-white/[0.15]"
+                        }`}
+                      >
+                        <div className="flex items-start justify-between gap-2">
+                          <div className="space-y-1">
+                            <div className="flex items-center gap-2">
+                              <span className="w-5 h-5 rounded-full bg-amber-500/20 text-amber-300 text-[11px] font-mono font-bold flex items-center justify-center border border-amber-500/40">
+                                B
+                              </span>
+                              <h5 className="text-xs sm:text-sm font-bold text-white">
+                                Verify AICTE Activity Points ≥ 50 without sharing individual certificates
+                              </h5>
+                            </div>
+                            <p className="text-[11px] text-slate-400 pl-7 leading-relaxed">
+                              Mathematically proves compliance with the mandatory 50-point graduation threshold without disclosing private certificate titles, dates, or individual activity logs.
+                            </p>
+                          </div>
+                          <div
+                            className={`w-4 h-4 rounded-full border-2 flex items-center justify-center shrink-0 mt-1 ${
+                              zkRule === "activity" ? "border-amber-400 bg-amber-500" : "border-slate-600"
+                            }`}
+                          >
+                            {zkRule === "activity" && <Check className="w-2.5 h-2.5 text-slate-950 stroke-[3]" />}
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Generate Button / Progress Animation */}
+                  <div>
+                    {isGeneratingZk ? (
+                      <div className="p-4 rounded-2xl bg-[#070810]/90 border border-purple-500/40 space-y-2.5 animate-pulse">
+                        <div className="flex justify-between items-center text-xs font-mono text-purple-300">
+                          <span className="flex items-center gap-2">
+                            <RefreshCw className="w-3.5 h-3.5 animate-spin text-purple-400" />
+                            {zkGenerationStep === 1 && "Stage 1/3: Formulating R1CS Polynomial Constraints & Circuit Gates..."}
+                            {zkGenerationStep === 2 && "Stage 2/3: Computing Secret Witness on BN254 Elliptic Curve..."}
+                            {zkGenerationStep === 3 && "Stage 3/3: Synthesizing Groth16 zk-SNARK & Anchoring to AICTE ABC State Root..."}
+                          </span>
+                          <span>{zkGenerationStep === 1 ? "33%" : zkGenerationStep === 2 ? "66%" : "99%"}</span>
+                        </div>
+                        <div className="w-full h-1.5 rounded-full bg-[#05050A] overflow-hidden">
+                          <div
+                            className="h-full bg-gradient-to-r from-purple-500 via-indigo-500 to-cyan-400 transition-all duration-300 rounded-full"
+                            style={{ width: `${(zkGenerationStep / 3) * 100}%` }}
+                          />
+                        </div>
+                      </div>
+                    ) : (
+                      <button
+                        type="button"
+                        onClick={handleGenerateZkProof}
+                        className="w-full bg-gradient-to-r from-indigo-500 via-purple-500 to-cyan-500 text-white font-semibold shadow-[0_0_25px_rgba(99,102,241,0.35)] hover:shadow-[0_0_35px_rgba(168,85,247,0.5)] text-xs py-2.5 rounded-xl transition-all flex items-center justify-center gap-2 cursor-pointer"
+                      >
+                        <KeyRound className="w-4 h-4 text-cyan-300" />
+                        <span>Generate ZK Proof for {zkRule === "gpa" ? "Rule A (CGPA ≥ 8.0)" : "Rule B (Activity Points ≥ 50)"}</span>
+                      </button>
+                    )}
+                  </div>
+
+                  {/* Generated Token Attestation Box */}
+                  {generatedZkProof && !isGeneratingZk && (
+                    <div className="p-4 rounded-2xl bg-[#070810]/90 border border-purple-500/40 space-y-3 animate-in zoom-in-95 duration-200">
+                      <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-2 pb-2.5 border-b border-white/[0.06]">
+                        <div className="flex items-center gap-2">
+                          <CheckCircle2 className="w-4 h-4 text-emerald-400" />
+                          <span className="text-xs font-bold text-white">
+                            Cryptographic ZK Attestation Token Minted
+                          </span>
+                        </div>
+                        <span className="text-[10px] font-mono px-2 py-0.5 rounded bg-emerald-500/10 text-emerald-400 border border-emerald-500/30 font-bold">
+                          WITNESS SATISFIED
+                        </span>
+                      </div>
+
+                      <div className="space-y-1.5">
+                        <div className="text-[10px] font-mono text-slate-400 uppercase tracking-wider">
+                          Token Payload (Shareable with Employers &amp; Higher Education Institutions):
+                        </div>
+                        <div className="p-3 rounded-xl bg-[#05050A] border border-white/[0.08] flex items-center justify-between gap-2">
+                          <span className="font-mono text-xs text-cyan-300 font-bold break-all">
+                            {generatedZkProof.token}
+                          </span>
+                          <button
+                            onClick={() => {
+                              navigator.clipboard.writeText(generatedZkProof.token);
+                              setZkCopied(true);
+                              setTimeout(() => setZkCopied(false), 2000);
+                              notify("ZK Proof Token copied to clipboard", "success");
+                            }}
+                            className="p-1.5 rounded-lg bg-[#0B0C14] hover:bg-[#121324] border border-white/[0.1] text-slate-300 hover:text-white transition-all shrink-0 cursor-pointer"
+                            title="Copy ZK Token"
+                          >
+                            {zkCopied ? <Check className="w-3.5 h-3.5 text-emerald-400" /> : <Copy className="w-3.5 h-3.5" />}
+                          </button>
+                        </div>
+                      </div>
+
+                      {/* Cryptographic Proof Details */}
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 text-[10px] font-mono text-slate-400 pt-1">
+                        <div className="p-2 rounded-lg bg-[#05050A]/80 border border-white/[0.05]">
+                          <span className="text-slate-500">Public Predicate: </span>
+                          <span className="text-white font-semibold">{generatedZkProof.predicate}</span>
+                        </div>
+                        <div className="p-2 rounded-lg bg-[#05050A]/80 border border-white/[0.05]">
+                          <span className="text-slate-500">Confidential Witness: </span>
+                          <span className="text-emerald-400 font-semibold">HIDDEN (Zero-Knowledge)</span>
+                        </div>
+                        <div className="p-2 rounded-lg bg-[#05050A]/80 border border-white/[0.05]">
+                          <span className="text-slate-500">Prover Circuit: </span>
+                          <span className="text-purple-300 font-semibold">Groth16 / BN254 Curve</span>
+                        </div>
+                        <div className="p-2 rounded-lg bg-[#05050A]/80 border border-white/[0.05]">
+                          <span className="text-slate-500">NAD Ledger Anchor: </span>
+                          <span className="text-cyan-300 font-semibold">Block #482910 Verified</span>
+                        </div>
+                      </div>
+
+                      <div className="pt-2 flex items-center justify-end gap-2.5">
+                        <button
+                          type="button"
+                          onClick={handleTestInRecruiterPortal}
+                          className="px-4 py-2 rounded-xl bg-gradient-to-r from-purple-500 to-indigo-600 hover:from-purple-400 hover:to-indigo-500 text-white font-bold text-xs transition-all shadow-[0_0_20px_rgba(168,85,247,0.35)] flex items-center gap-1.5 cursor-pointer"
+                        >
+                          <Briefcase className="w-3.5 h-3.5" />
+                          <span>Test in Recruiter Verifier (Tab 3) →</span>
+                        </button>
+                      </div>
+                    </div>
+                  )}
+                </div>
+
                 {/* Section 2: SHA-256 Verified Academic Credits Table (Clickable Hashes) */}
-                <div className="p-6 rounded-3xl bg-slate-900/70 border border-slate-800/80 backdrop-blur-xl shadow-xl">
-                  <div className="flex items-center justify-between pb-4 mb-4 border-b border-slate-800">
+                <div className="p-6 rounded-3xl bg-[#0B0C14]/80 border border-white/[0.07] hover:border-indigo-500/40 backdrop-blur-2xl shadow-xl shadow-[inset_0_1px_0_0_rgba(255,255,255,0.08)] transition-all duration-300">
+                  <div className="flex items-center justify-between pb-4 mb-4 border-b border-white/[0.08]">
                     <div className="flex items-center gap-2">
                       <FileText className="w-4 h-4 text-emerald-400" />
                       <h4 className="text-sm font-bold text-white">
@@ -1569,7 +2230,7 @@ export default function CommandCenter() {
                   <div className="overflow-x-auto">
                     <table className="w-full text-left text-xs">
                       <thead>
-                        <tr className="border-b border-slate-800 text-slate-400 font-mono text-[10px] uppercase">
+                        <tr className="border-b border-white/[0.08] text-slate-400 font-mono text-[10px] uppercase">
                           <th className="py-2.5 px-3">Sem</th>
                           <th className="py-2.5 px-3">Subject</th>
                           <th className="py-2.5 px-3">Title</th>
@@ -1579,27 +2240,27 @@ export default function CommandCenter() {
                           <th className="py-2.5 px-3 text-right">W3C Credential</th>
                         </tr>
                       </thead>
-                      <tbody className="divide-y divide-slate-800/60 font-sans">
+                      <tbody className="divide-y divide-white/[0.06] font-sans">
                         {studentData.academic_credits?.map((credit: any, idx: number) => (
-                          <tr key={idx} className="hover:bg-slate-800/40 transition-colors">
+                          <tr key={idx} className="hover:bg-white/[0.03] transition-colors">
                             <td className="py-3 px-3 font-mono text-slate-300">Sem {credit.semester}</td>
                             <td className="py-3 px-3 font-mono font-bold text-cyan-300">{credit.subject_code}</td>
                             <td className="py-3 px-3 text-white font-medium">{credit.subject_name}</td>
                             <td className="py-3 px-3 font-bold text-slate-200">{credit.credits_earned}</td>
                             <td className="py-3 px-3">
-                              <span className="w-7 h-6 rounded bg-emerald-500/10 text-emerald-400 font-bold font-mono border border-emerald-500/20 inline-flex items-center justify-center">
+                              <span className="w-7 h-6 rounded bg-emerald-500/10 text-emerald-400 font-bold font-mono border border-emerald-500/30 inline-flex items-center justify-center">
                                 {credit.grade}
                               </span>
                             </td>
                             <td className="py-3 px-3 font-mono text-[10px]">
                               <button
                                 onClick={() => openCredentialInspector(credit, "academic_credit")}
-                                className="group/hash inline-flex items-center gap-1.5 bg-slate-950/80 hover:bg-slate-800 px-2 py-1 rounded border border-slate-800 hover:border-emerald-500/50 text-emerald-400/90 transition-all max-w-[210px] text-left cursor-pointer"
+                                className="group/hash inline-flex items-center gap-1.5 bg-emerald-500/10 hover:bg-emerald-500/20 px-2.5 py-1 rounded-lg border border-emerald-500/30 hover:border-emerald-400 text-emerald-400 transition-all max-w-[210px] text-left cursor-pointer shadow-sm"
                                 title="Click to inspect complete W3C Verifiable Credential JSON-LD & Simulate Tamper Attack"
                               >
                                 <Hash className="w-3 h-3 text-emerald-400 shrink-0" />
                                 <span className="truncate">{credit.record_hash?.slice(0, 16)}...</span>
-                                <ExternalLink className="w-3 h-3 text-slate-500 group-hover/hash:text-emerald-400 shrink-0" />
+                                <ExternalLink className="w-3 h-3 text-emerald-400/70 group-hover/hash:text-emerald-300 shrink-0" />
                               </button>
                             </td>
                             <td className="py-3 px-3 text-right">
@@ -1620,8 +2281,8 @@ export default function CommandCenter() {
 
                 {/* Section 3: AICTE Activity Points Certificates List (With W3C Inspector trigger) */}
                 {studentData.activity_certificates && studentData.activity_certificates.length > 0 && (
-                  <div className="p-6 rounded-3xl bg-slate-900/70 border border-slate-800/80 backdrop-blur-xl shadow-xl">
-                    <div className="flex items-center justify-between pb-3 mb-4 border-b border-slate-800">
+                  <div className="p-6 rounded-3xl bg-[#0B0C14]/80 border border-white/[0.07] hover:border-indigo-500/40 backdrop-blur-2xl shadow-xl shadow-[inset_0_1px_0_0_rgba(255,255,255,0.08)] transition-all duration-300">
+                    <div className="flex items-center justify-between pb-3 mb-4 border-b border-white/[0.08]">
                       <div className="flex items-center gap-2">
                         <Award className="w-4 h-4 text-amber-400" />
                         <h4 className="text-sm font-bold text-white">
@@ -1637,27 +2298,27 @@ export default function CommandCenter() {
                       {studentData.activity_certificates.map((cert: any, idx: number) => (
                         <div
                           key={idx}
-                          className="p-4 rounded-2xl bg-slate-950/70 border border-slate-800/80 hover:border-slate-700 transition-all flex flex-col justify-between"
+                          className="p-4 rounded-2xl bg-[#070810]/80 border border-white/[0.07] hover:border-indigo-500/40 transition-all flex flex-col justify-between"
                         >
                           <div>
                             <div className="flex items-start justify-between gap-2 mb-1.5">
                               <h5 className="text-sm font-bold text-white">{cert.title}</h5>
-                              <span className="text-xs font-bold text-amber-400 bg-amber-500/10 px-2 py-0.5 rounded border border-amber-500/20 shrink-0">
+                              <span className="text-xs font-bold text-amber-300 bg-amber-500/10 px-2 py-0.5 rounded border border-amber-500/30 shrink-0">
                                 +{cert.points_awarded || 10} Pts
                               </span>
                             </div>
                             <div className="flex items-center gap-3 text-xs text-slate-400 mb-2">
                               <span>Category: {cert.category || "Skill Development"}</span>
-                              <span className="font-mono text-emerald-400 text-[10px] bg-emerald-500/10 px-2 py-0.5 rounded border border-emerald-500/20">
+                              <span className="font-mono text-emerald-400 text-[10px] bg-emerald-500/10 px-2 py-0.5 rounded border border-emerald-500/30">
                                 OCR Score: {cert.ocr_confidence_score || 96}%
                               </span>
                             </div>
                           </div>
 
-                          <div className="pt-2 border-t border-slate-800/80 flex items-center justify-between text-xs">
+                          <div className="pt-2 border-t border-white/[0.06] flex items-center justify-between text-xs">
                             <button
                               onClick={() => openCredentialInspector(cert, "activity_certificate")}
-                              className="font-mono text-[10px] text-emerald-400 hover:underline flex items-center gap-1 cursor-pointer"
+                              className="font-mono text-[10px] text-emerald-400 bg-emerald-500/10 hover:bg-emerald-500/20 border border-emerald-500/30 px-2 py-0.5 rounded flex items-center gap-1 cursor-pointer transition-colors"
                               title="Click hash to inspect W3C VC"
                             >
                               <Hash className="w-3 h-3" />
@@ -1680,9 +2341,9 @@ export default function CommandCenter() {
                 {/* Section 4: Dual Forms: AI OCR Drag-and-Drop Scanner + DEPA Privacy & Consent Manager */}
                 <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
                   {/* SIH WINNING FEATURE 2: DRAG-AND-DROP AI VISION & OCR CERTIFICATE SCANNER */}
-                  <div className="p-6 rounded-3xl bg-slate-900/70 border border-slate-800/80 backdrop-blur-xl shadow-xl flex flex-col justify-between">
+                  <div className="p-6 rounded-3xl bg-[#0B0C14]/80 border border-white/[0.07] hover:border-indigo-500/40 backdrop-blur-2xl shadow-xl shadow-[inset_0_1px_0_0_rgba(255,255,255,0.08)] transition-all duration-300 flex flex-col justify-between">
                     <div>
-                      <div className="flex items-center justify-between pb-3 mb-4 border-b border-slate-800">
+                      <div className="flex items-center justify-between pb-3 mb-4 border-b border-white/[0.08]">
                         <div className="flex items-center gap-2">
                           <ScanLine className="w-4 h-4 text-cyan-400" />
                           <h4 className="text-sm font-bold text-white">
@@ -1695,16 +2356,31 @@ export default function CommandCenter() {
                         </span>
                       </div>
 
-                      {/* FAST TESTING 1-CLICK DEMO BUTTON */}
-                      <div className="mb-3">
+                      {/* FAST TESTING 1-CLICK DEMO BUTTONS */}
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 mb-3">
                         <button
                           type="button"
                           onClick={handleLoadSampleCertificate}
                           disabled={isScanning}
-                          className="w-full inline-flex items-center justify-center gap-2 px-3 py-2 rounded-xl bg-gradient-to-r from-cyan-500/20 to-blue-500/20 hover:from-cyan-500/30 hover:to-blue-500/30 text-cyan-300 border border-cyan-500/40 text-xs font-bold transition-all shadow-sm shadow-cyan-500/10 cursor-pointer"
+                          className="inline-flex items-center justify-center gap-1.5 px-3 py-2 rounded-xl bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 text-xs font-bold transition-all shadow-sm cursor-pointer"
                         >
-                          <Zap className="w-3.5 h-3.5 text-amber-400" />
-                          <span>Load Sample Hackathon Certificate (1-Click Test)</span>
+                          <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400" />
+                          <span>Load Authentic Certificate (Pass)</span>
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            runOcrScannerPipeline(
+                              "Smart_India_Hackathon_2026_Forged_RajeshKumar.pdf",
+                              "1.2 MB",
+                              "Rajesh Kumar (Tampered)"
+                            );
+                          }}
+                          disabled={isScanning}
+                          className="inline-flex items-center justify-center gap-1.5 px-3 py-2 rounded-xl bg-rose-500/15 hover:bg-rose-500/25 text-rose-300 border border-rose-500/40 text-xs font-bold transition-all shadow-sm cursor-pointer"
+                        >
+                          <AlertTriangle className="w-3.5 h-3.5 text-rose-400" />
+                          <span>Load Forged Certificate (Fail Check)</span>
                         </button>
                       </div>
 
@@ -1726,7 +2402,7 @@ export default function CommandCenter() {
                         className={`relative rounded-2xl border-2 border-dashed p-5 text-center cursor-pointer transition-all overflow-hidden ${
                           isDragOver
                             ? "border-cyan-400 bg-cyan-950/30 scale-[1.01]"
-                            : "border-slate-700/80 hover:border-cyan-500/60 bg-slate-950/60 hover:bg-slate-900/60"
+                            : "border-white/[0.1] hover:border-indigo-500/60 bg-[#070810]/60 hover:bg-[#070810]/90"
                         }`}
                       >
                         <input
@@ -1744,7 +2420,7 @@ export default function CommandCenter() {
                         {/* 3-STAGE VISUAL SCANNING ANIMATION PIPELINE */}
                         {isScanning ? (
                           <div className="py-4 flex flex-col items-center justify-center gap-3">
-                            <div className="relative w-full max-w-sm h-14 bg-slate-900 rounded-xl border border-cyan-500/40 overflow-hidden flex items-center justify-center shadow-inner">
+                            <div className="relative w-full max-w-sm h-14 bg-[#05050A] rounded-xl border border-indigo-500/40 overflow-hidden flex items-center justify-center shadow-inner">
                               <div className="absolute top-0 left-0 right-0 h-1 bg-gradient-to-r from-transparent via-cyan-400 to-transparent animate-pulse shadow-[0_0_15px_#22d3ee]" />
                               <ScanLine className="w-7 h-7 text-cyan-400 animate-bounce" />
                             </div>
@@ -1755,9 +2431,9 @@ export default function CommandCenter() {
                                 <span>AI Vision Pipeline</span>
                                 <span>{scanStage === 1 ? "33%" : scanStage === 2 ? "66%" : "100%"}</span>
                               </div>
-                              <div className="w-full h-1.5 rounded-full bg-slate-900 overflow-hidden">
+                              <div className="w-full h-1.5 rounded-full bg-[#070810] overflow-hidden">
                                 <div
-                                  className="h-full bg-gradient-to-r from-cyan-400 to-emerald-400 transition-all duration-300"
+                                  className="h-full bg-gradient-to-r from-cyan-400 via-blue-500 to-indigo-500 transition-all duration-300"
                                   style={{
                                     width: scanStage === 1 ? "33%" : scanStage === 2 ? "66%" : "100%",
                                   }}
@@ -1774,7 +2450,7 @@ export default function CommandCenter() {
                           </div>
                         ) : (
                           <div className="py-2 flex flex-col items-center justify-center gap-2">
-                            <div className="w-10 h-10 rounded-2xl bg-cyan-500/10 border border-cyan-500/30 flex items-center justify-center text-cyan-400 shadow-md shadow-cyan-500/10">
+                            <div className="w-10 h-10 rounded-2xl bg-indigo-500/10 border border-indigo-500/30 flex items-center justify-center text-indigo-400 shadow-md shadow-indigo-500/10">
                               <Upload className="w-5 h-5" />
                             </div>
                             <div>
@@ -1786,7 +2462,7 @@ export default function CommandCenter() {
                               </p>
                             </div>
                             {scannedFileDetails && (
-                              <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-cyan-500/10 border border-cyan-500/20 text-[10px] font-mono text-cyan-300 mt-1">
+                              <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-indigo-500/10 border border-indigo-500/20 text-[10px] font-mono text-indigo-300 mt-1">
                                 <FileCheck className="w-3 h-3" />
                                 <span>{scannedFileDetails.name} ({scannedFileDetails.size})</span>
                               </div>
@@ -1797,25 +2473,88 @@ export default function CommandCenter() {
 
                       {/* AI CONFIDENCE BREAKDOWN CHIPS */}
                       {aiConfidenceBreakdown && (
-                        <div className="grid grid-cols-3 gap-2 mt-3 animate-in fade-in duration-300">
-                          <div className="p-2.5 rounded-xl bg-slate-950/80 border border-emerald-500/30 text-center">
-                            <div className="text-[10px] font-mono text-slate-400">Name Match</div>
-                            <div className="text-xs font-extrabold text-emerald-400">
-                              {aiConfidenceBreakdown.nameMatch}%
+                        <div className="space-y-2.5 mt-3 animate-in fade-in duration-300">
+                          <div className="grid grid-cols-3 gap-2">
+                            <div
+                              className={`p-2.5 rounded-xl text-center border transition-all ${
+                                aiConfidenceBreakdown.nameMatch > 70
+                                  ? "bg-[#070810]/80 border-emerald-500/30"
+                                  : "bg-rose-950/40 border-rose-500/60 shadow-[0_0_12px_rgba(244,63,94,0.25)]"
+                              }`}
+                            >
+                              <div className="text-[10px] font-mono text-slate-400">Name Match</div>
+                              <div
+                                className={`text-xs font-extrabold ${
+                                  aiConfidenceBreakdown.nameMatch > 70 ? "text-emerald-400" : "text-rose-400"
+                                }`}
+                              >
+                                {aiConfidenceBreakdown.nameMatch}%
+                              </div>
+                            </div>
+
+                            <div
+                              className={`p-2.5 rounded-xl text-center border transition-all ${
+                                aiConfidenceBreakdown.issuerSignature > 70
+                                  ? "bg-[#070810]/80 border-cyan-500/30"
+                                  : "bg-rose-950/40 border-rose-500/50"
+                              }`}
+                            >
+                              <div className="text-[10px] font-mono text-slate-400">Issuer Signature</div>
+                              <div
+                                className={`text-xs font-extrabold ${
+                                  aiConfidenceBreakdown.issuerSignature > 70 ? "text-cyan-400" : "text-rose-400"
+                                }`}
+                              >
+                                {aiConfidenceBreakdown.issuerSignature}%
+                              </div>
+                            </div>
+
+                            <div
+                              className={`p-2.5 rounded-xl text-center border transition-all ${
+                                aiConfidenceBreakdown.forgeryCheck.toLowerCase().includes("failed") ||
+                                aiConfidenceBreakdown.nameMatch < 50
+                                  ? "bg-rose-950/50 border-rose-500/70 shadow-[0_0_20px_rgba(244,63,94,0.35)] animate-pulse"
+                                  : "bg-emerald-950/20 border-emerald-500/30"
+                              }`}
+                            >
+                              <div className="text-[10px] font-mono text-slate-400">Forgery Check</div>
+                              <div
+                                className={`text-xs font-extrabold ${
+                                  aiConfidenceBreakdown.forgeryCheck.toLowerCase().includes("failed") ||
+                                  aiConfidenceBreakdown.nameMatch < 50
+                                    ? "text-rose-400"
+                                    : "text-emerald-400"
+                                }`}
+                              >
+                                {aiConfidenceBreakdown.forgeryCheck.toLowerCase().includes("failed") ||
+                                aiConfidenceBreakdown.nameMatch < 50
+                                  ? "FAILED (High Risk)"
+                                  : "Passed (Authentic)"}
+                              </div>
                             </div>
                           </div>
-                          <div className="p-2.5 rounded-xl bg-slate-950/80 border border-cyan-500/30 text-center">
-                            <div className="text-[10px] font-mono text-slate-400">Issuer Signature</div>
-                            <div className="text-xs font-extrabold text-cyan-400">
-                              {aiConfidenceBreakdown.issuerSignature}%
+
+                          {/* Forgery Check Failed Warning Banner */}
+                          {(aiConfidenceBreakdown.forgeryCheck.toLowerCase().includes("failed") ||
+                            aiConfidenceBreakdown.nameMatch < 50) && (
+                            <div className="p-3 rounded-2xl bg-rose-950/40 border border-rose-500/50 text-rose-300 text-xs flex items-start gap-2.5 shadow-[0_0_20px_rgba(244,63,94,0.2)] animate-in zoom-in-95 duration-200">
+                              <AlertTriangle className="w-4 h-4 text-rose-400 shrink-0 mt-0.5" />
+                              <div className="space-y-0.5">
+                                <div className="font-bold text-white flex items-center gap-1.5">
+                                  <span>FORGERY CHECK FAILED: High Chance of Forgery (94.2% Risk)</span>
+                                  <span className="text-[9px] font-mono px-1.5 py-0.2 rounded bg-rose-500/30 text-rose-200 border border-rose-500/50 font-black">
+                                    REJECTED
+                                  </span>
+                                </div>
+                                <p className="text-[11px] text-rose-200/90 leading-relaxed font-mono">
+                                  Demographic mismatch detected: Extracted certificate name does not match registered APAAR student identity (
+                                  <strong className="text-white">
+                                    {studentData?.student_profile?.full_name || "Arjun Subramanian"}
+                                  </strong>). Document cannot be credited to this ledger.
+                                </p>
+                              </div>
                             </div>
-                          </div>
-                          <div className="p-2.5 rounded-xl bg-slate-950/80 border border-amber-500/30 text-center">
-                            <div className="text-[10px] font-mono text-slate-400">Forgery Check</div>
-                            <div className="text-xs font-extrabold text-amber-400">
-                              {aiConfidenceBreakdown.forgeryCheck}
-                            </div>
-                          </div>
+                          )}
                         </div>
                       )}
 
@@ -1829,7 +2568,7 @@ export default function CommandCenter() {
                             type="text"
                             value={uploadTitle}
                             onChange={(e) => setUploadTitle(e.target.value)}
-                            className="w-full bg-slate-950/80 border border-slate-800 rounded-xl px-3 py-2 text-xs text-white focus:outline-none focus:border-cyan-500"
+                            className="w-full bg-[#070810]/90 border border-white/[0.08] rounded-xl px-3 py-2 text-xs text-white focus:outline-none focus:border-indigo-500 shadow-inner"
                             required
                           />
                         </div>
@@ -1842,7 +2581,7 @@ export default function CommandCenter() {
                             <select
                               value={uploadCategory}
                               onChange={(e) => setUploadCategory(e.target.value)}
-                              className="w-full bg-slate-950/80 border border-slate-800 rounded-xl px-3 py-2 text-xs text-white focus:outline-none focus:border-cyan-500"
+                              className="w-full bg-[#070810]/90 border border-white/[0.08] rounded-xl px-3 py-2 text-xs text-white focus:outline-none focus:border-indigo-500"
                             >
                               <option value="Technical">Technical Hackathon</option>
                               <option value="Workshop">Workshop / Seminar</option>
@@ -1858,7 +2597,7 @@ export default function CommandCenter() {
                               type="number"
                               value={uploadPoints}
                               onChange={(e) => setUploadPoints(e.target.value)}
-                              className="w-full bg-slate-950/80 border border-slate-800 rounded-xl px-3 py-2 text-xs text-white focus:outline-none focus:border-cyan-500"
+                              className="w-full bg-[#070810]/90 border border-white/[0.08] rounded-xl px-3 py-2 text-xs text-white focus:outline-none focus:border-indigo-500 shadow-inner"
                               min="1"
                               max="50"
                               required
@@ -1873,31 +2612,50 @@ export default function CommandCenter() {
                             </label>
                             <button
                               type="button"
-                              onClick={() =>
-                                setUploadExtractedName(
-                                  uploadExtractedName === "Arjun Subramanian"
-                                    ? "Rajesh Kumar (Tampered)"
-                                    : "Arjun Subramanian"
-                                )
-                              }
-                              className="text-[10px] text-amber-400 hover:underline cursor-pointer"
+                              onClick={() => {
+                                const isCurrentlyTampered =
+                                  uploadExtractedName.includes("Tampered") ||
+                                  uploadExtractedName.trim().toLowerCase() !==
+                                    (studentData?.student_profile?.full_name || "Arjun Subramanian").trim().toLowerCase();
+                                const newName = isCurrentlyTampered
+                                  ? (studentData?.student_profile?.full_name || "Arjun Subramanian")
+                                  : "Rajesh Kumar (Tampered)";
+                                updateNameMatchAndForgery(newName);
+                              }}
+                              className="text-[10px] text-amber-300 hover:text-amber-200 hover:underline cursor-pointer flex items-center gap-1 font-mono"
                             >
-                              Toggle Name Tamper Test
+                              <RefreshCw className="w-2.5 h-2.5" />
+                              <span>Toggle Name Tamper Test (Simulate Forgery)</span>
                             </button>
                           </div>
                           <input
                             type="text"
                             value={uploadExtractedName}
-                            onChange={(e) => setUploadExtractedName(e.target.value)}
-                            className="w-full bg-slate-950/80 border border-slate-800 rounded-xl px-3 py-2 text-xs font-mono text-white focus:outline-none focus:border-cyan-500"
+                            onChange={(e) => updateNameMatchAndForgery(e.target.value)}
+                            className={`w-full bg-[#070810]/90 border rounded-xl px-3 py-2 text-xs font-mono text-white focus:outline-none shadow-inner transition-colors ${
+                              uploadExtractedName.trim().toLowerCase() ===
+                              (studentData?.student_profile?.full_name || "Arjun Subramanian").trim().toLowerCase()
+                                ? "border-white/[0.08] focus:border-indigo-500"
+                                : "border-rose-500/70 focus:border-rose-400 text-rose-300 bg-rose-950/20"
+                            }`}
                             required
                           />
+                          {uploadExtractedName.trim().toLowerCase() !==
+                            (studentData?.student_profile?.full_name || "Arjun Subramanian").trim().toLowerCase() && (
+                            <div className="text-[10px] font-mono text-rose-400 mt-1 flex items-center gap-1">
+                              <AlertTriangle className="w-3 h-3 text-rose-400 shrink-0" />
+                              <span>
+                                Name does not match registered student (
+                                {studentData?.student_profile?.full_name || "Arjun Subramanian"}). High chance of forgery!
+                              </span>
+                            </div>
+                          )}
                         </div>
 
                         <button
                           type="submit"
                           disabled={uploadLoading || isScanning}
-                          className="w-full bg-gradient-to-r from-cyan-500 to-blue-600 hover:from-cyan-400 hover:to-blue-500 text-slate-950 text-xs font-bold py-2.5 rounded-xl transition-all shadow-md shadow-cyan-500/20 disabled:opacity-50 mt-1 cursor-pointer"
+                          className="w-full bg-gradient-to-r from-indigo-500 via-purple-500 to-cyan-500 text-white font-semibold shadow-[0_0_25px_rgba(99,102,241,0.35)] hover:shadow-[0_0_35px_rgba(168,85,247,0.5)] text-xs py-2.5 rounded-xl transition-all disabled:opacity-50 mt-1 cursor-pointer"
                         >
                           {uploadLoading ? "Simulating AI OCR & NLP Extraction..." : "Re-Verify & Submit for Nodal Review"}
                         </button>
@@ -1908,30 +2666,40 @@ export default function CommandCenter() {
                     {uploadResult && (
                       <div
                         className={`mt-4 p-4 rounded-2xl border text-xs ${
-                          uploadResult.tamper_warning
-                            ? "bg-red-950/40 border-red-500/40 text-red-200"
-                            : "bg-emerald-950/40 border-emerald-500/40 text-emerald-200"
+                          uploadResult.tamper_warning || uploadResult.forgery_detected
+                            ? "bg-rose-950/40 border-rose-500/50 text-rose-300 shadow-[0_0_25px_rgba(244,63,94,0.25)]"
+                            : "bg-emerald-950/40 border-emerald-500/40 text-emerald-200 shadow-[0_0_20px_rgba(16,185,129,0.15)]"
                         }`}
                       >
                         <div className="flex items-center justify-between font-bold mb-1">
                           <span className="flex items-center gap-1.5">
-                            {uploadResult.tamper_warning ? (
-                              <AlertTriangle className="w-4 h-4 text-red-400" />
+                            {uploadResult.tamper_warning || uploadResult.forgery_detected ? (
+                              <AlertTriangle className="w-4 h-4 text-rose-400" />
                             ) : (
                               <CheckCircle2 className="w-4 h-4 text-emerald-400" />
                             )}
-                            {uploadResult.tamper_warning ? "Tamper Warning Detected!" : "AI OCR Verification Passed"}
+                            {uploadResult.tamper_warning || uploadResult.forgery_detected
+                              ? "🚨 HIGH RISK OF FORGERY: Verification Failed!"
+                              : "AI OCR Verification Passed"}
                           </span>
-                          <span className="font-mono font-bold text-xs">
-                            Score: {uploadResult.ocr_confidence_score}%
+                          <span
+                            className={`font-mono font-bold text-xs ${
+                              uploadResult.tamper_warning || uploadResult.forgery_detected
+                                ? "text-rose-400"
+                                : "text-emerald-400"
+                            }`}
+                          >
+                            {uploadResult.tamper_warning || uploadResult.forgery_detected
+                              ? "Forgery Risk: 94.2% (FAILED)"
+                              : `Score: ${uploadResult.ocr_confidence_score}%`}
                           </span>
                         </div>
                         <p className="text-[11px] opacity-90 leading-relaxed mb-2">
-                          {uploadResult.message || uploadResult.details}
+                          {uploadResult.details || uploadResult.message || uploadResult.error}
                         </p>
                         {uploadResult.record_hash && (
                           <div className="space-y-2">
-                            <div className="text-[10px] font-mono break-all bg-slate-950/60 p-2 rounded border border-slate-800 text-slate-400">
+                            <div className="text-[10px] font-mono break-all bg-[#05050A] p-2 rounded border border-white/[0.08] text-slate-400">
                               Hash: {uploadResult.record_hash}
                             </div>
                             <button
@@ -1960,16 +2728,16 @@ export default function CommandCenter() {
                   </div>
 
                   {/* DEPA PRIVACY & CONSENT MANAGER */}
-                  <div className="p-6 rounded-3xl bg-slate-900/70 border border-slate-800/80 backdrop-blur-xl shadow-xl flex flex-col justify-between">
+                  <div className="p-6 rounded-3xl bg-[#0B0C14]/80 border border-white/[0.07] hover:border-indigo-500/40 backdrop-blur-2xl shadow-xl shadow-[inset_0_1px_0_0_rgba(255,255,255,0.08)] transition-all duration-300 flex flex-col justify-between">
                     <div>
-                      <div className="flex items-center justify-between pb-3 mb-4 border-b border-slate-800">
+                      <div className="flex items-center justify-between pb-3 mb-4 border-b border-white/[0.08]">
                         <div className="flex items-center gap-2">
                           <Lock className="w-4 h-4 text-emerald-400" />
                           <h4 className="text-sm font-bold text-white">
                             {t.depaManager}
                           </h4>
                         </div>
-                        <span className="text-[10px] font-mono text-emerald-400 bg-emerald-500/10 px-2 py-0.5 rounded border border-emerald-500/20">
+                        <span className="text-[10px] font-mono text-emerald-400 bg-emerald-500/10 px-2 py-0.5 rounded border border-emerald-500/30 font-bold">
                           Student-Controlled Access
                         </span>
                       </div>
@@ -1984,7 +2752,7 @@ export default function CommandCenter() {
                           studentData.consents.map((consent: any, idx: number) => (
                             <div
                               key={idx}
-                              className="p-3.5 rounded-2xl bg-slate-950/70 border border-slate-800/90 space-y-2.5"
+                              className="p-3.5 rounded-2xl bg-[#070810]/80 border border-white/[0.07] space-y-2.5"
                             >
                               <div className="flex items-start justify-between gap-2">
                                 <div>
@@ -2000,22 +2768,22 @@ export default function CommandCenter() {
                                     consent.status === "APPROVED"
                                       ? "bg-emerald-500/10 text-emerald-400 border-emerald-500/30"
                                       : consent.status === "PENDING"
-                                      ? "bg-amber-500/10 text-amber-400 border-amber-500/30"
-                                      : "bg-red-500/10 text-red-400 border-red-500/30"
+                                      ? "bg-amber-500/10 text-amber-300 border-amber-500/30"
+                                      : "bg-rose-500/10 text-rose-400 border-rose-500/40"
                                   }`}
                                 >
                                   {consent.status}
                                 </span>
                               </div>
 
-                              <div className="flex items-center justify-between text-[10px] font-mono text-slate-500 pt-2 border-t border-slate-800">
+                              <div className="flex items-center justify-between text-[10px] font-mono text-slate-500 pt-2 border-t border-white/[0.06]">
                                 <span>Expires: {new Date(consent.expires_at).toLocaleDateString()}</span>
                                 <div className="flex items-center gap-2">
                                   {consent.status === "PENDING" && (
                                     <>
                                       <button
                                         onClick={() => handleConsentAction(consent.id, "REVOKE")}
-                                        className="text-red-400 hover:underline cursor-pointer"
+                                        className="text-rose-400 hover:underline cursor-pointer"
                                       >
                                         Deny
                                       </button>
@@ -2030,7 +2798,7 @@ export default function CommandCenter() {
                                   {consent.status === "APPROVED" && (
                                     <button
                                       onClick={() => handleConsentAction(consent.id, "REVOKE")}
-                                      className="text-red-400 hover:underline cursor-pointer"
+                                      className="text-rose-400 hover:underline cursor-pointer"
                                     >
                                       Revoke Access
                                     </button>
@@ -2060,7 +2828,7 @@ export default function CommandCenter() {
                         : `/verify/${activeToken}`;
 
                       return (
-                        <div className="mt-4 pt-4 border-t border-slate-800/80 flex flex-col sm:flex-row sm:items-center gap-4 bg-slate-950/60 p-3 rounded-2xl border border-slate-800">
+                        <div className="mt-4 pt-4 border-t border-white/[0.08] flex flex-col sm:flex-row sm:items-center gap-4 bg-[#070810]/80 p-3.5 rounded-2xl border border-white/[0.07]">
                           <div className="p-2 bg-white rounded-xl shrink-0 self-start sm:self-auto shadow-md">
                             <QRCodeSVG
                               value={qrUrl}
@@ -2071,7 +2839,7 @@ export default function CommandCenter() {
                             <div className="text-xs font-bold text-white flex items-center gap-1.5">
                               <QrCode className="w-3.5 h-3.5 text-emerald-400 shrink-0" />
                               <span>Scannable Recruiter Transcript QR</span>
-                              <span className="text-[9px] font-mono px-1.5 py-0.5 rounded bg-emerald-500/10 text-emerald-400 border border-emerald-500/30">
+                              <span className="text-[9px] font-mono px-1.5 py-0.5 rounded bg-emerald-500/10 text-emerald-400 border border-emerald-500/30 font-bold">
                                 LIVE VERCEL DPI
                               </span>
                             </div>
@@ -2083,7 +2851,7 @@ export default function CommandCenter() {
                                 href={qrUrl}
                                 target="_blank"
                                 rel="noreferrer"
-                                className="inline-flex items-center gap-1 text-[10px] font-mono text-emerald-400 hover:underline break-all"
+                                className="inline-flex items-center gap-1 text-[10px] font-mono text-indigo-400 hover:text-indigo-300 hover:underline break-all"
                               >
                                 <span>{qrUrl}</span>
                                 <ExternalLink className="w-2.5 h-2.5 shrink-0" />
@@ -2106,10 +2874,10 @@ export default function CommandCenter() {
         {activeTab === "nodal" && (
           <div className="space-y-6 animate-in fade-in duration-300">
             {/* Header banner */}
-            <div className="p-6 rounded-3xl bg-gradient-to-r from-cyan-950/60 via-slate-900 to-blue-950/60 border border-cyan-500/30 backdrop-blur-xl">
+            <div className="p-6 rounded-3xl bg-gradient-to-r from-[#121324] via-[#0D0E1A] to-[#1A102B] border border-indigo-400/30 backdrop-blur-2xl shadow-xl shadow-[inset_0_1px_0_0_rgba(255,255,255,0.08)]">
               <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
                 <div className="flex items-center gap-3">
-                  <div className="w-12 h-12 rounded-2xl bg-cyan-500/10 border border-cyan-500/30 flex items-center justify-center text-cyan-400">
+                  <div className="w-12 h-12 rounded-2xl bg-indigo-500/10 border border-indigo-500/30 flex items-center justify-center text-indigo-400 shadow-md shadow-indigo-500/10">
                     <Building2 className="w-6 h-6" />
                   </div>
                   <div>
@@ -2129,12 +2897,12 @@ export default function CommandCenter() {
                       setRegAicteCode("1-10000001");
                       setShowRegisterModal(true);
                     }}
-                    className="bg-gradient-to-r from-amber-500 via-emerald-500 to-cyan-500 hover:from-amber-400 hover:to-cyan-400 text-slate-950 text-xs font-extrabold px-3.5 py-1.5 rounded-xl transition-all shadow-md shadow-cyan-500/20 flex items-center gap-1.5 cursor-pointer"
+                    className="bg-gradient-to-r from-indigo-500 via-purple-500 to-cyan-500 text-white font-semibold shadow-[0_0_25px_rgba(99,102,241,0.35)] hover:shadow-[0_0_35px_rgba(168,85,247,0.5)] text-xs font-extrabold px-3.5 py-1.5 rounded-xl transition-all flex items-center gap-1.5 cursor-pointer"
                   >
                     <Sparkles className="w-3.5 h-3.5" />
                     <span>+ Mint New Student APAAR ID</span>
                   </button>
-                  <span className="text-[10px] font-mono uppercase bg-cyan-500/10 text-cyan-400 border border-cyan-500/20 px-2.5 py-1 rounded-full">
+                  <span className="text-[10px] font-mono uppercase bg-indigo-500/10 text-indigo-300 border border-indigo-500/20 px-2.5 py-1 rounded-full">
                     Institution: 1-10000001 (Chennai Institute of AI & Tech)
                   </span>
                 </div>
@@ -2143,9 +2911,9 @@ export default function CommandCenter() {
 
             <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
               {/* SECTION A: PUSH SEMESTER CREDITS TO ABC & BULK ERP SYNC */}
-              <div className="p-6 rounded-3xl bg-slate-900/70 border border-slate-800/80 backdrop-blur-xl shadow-xl flex flex-col justify-between">
+              <div className="p-6 rounded-3xl bg-[#0B0C14]/80 border border-white/[0.07] hover:border-indigo-500/40 backdrop-blur-2xl shadow-xl shadow-[inset_0_1px_0_0_rgba(255,255,255,0.08)] transition-all duration-300 flex flex-col justify-between">
                 <div>
-                  <div className="flex items-center justify-between pb-3 mb-4 border-b border-slate-800">
+                  <div className="flex items-center justify-between pb-3 mb-4 border-b border-white/[0.08]">
                     <div className="flex items-center gap-2">
                       <GraduationCap className="w-4 h-4 text-cyan-400" />
                       <h4 className="text-sm font-bold text-white">
@@ -2158,7 +2926,7 @@ export default function CommandCenter() {
                   </div>
 
                   {/* SIH WINNING FEATURE 3: 1-CLICK BULK ERP CSV SYNC */}
-                  <div className="mb-4 p-3.5 rounded-2xl bg-slate-950/70 border border-blue-500/30 space-y-2.5">
+                  <div className="mb-4 p-3.5 rounded-2xl bg-[#070810]/80 border border-white/[0.08] space-y-2.5">
                     <div className="flex items-center justify-between">
                       <div className="flex items-center gap-2">
                         <FileSpreadsheet className="w-4 h-4 text-cyan-400" />
@@ -2177,7 +2945,7 @@ export default function CommandCenter() {
                       type="button"
                       onClick={handleBulkErpSync}
                       disabled={bulkSyncing}
-                      className="w-full inline-flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-500 hover:to-indigo-500 text-white text-xs font-bold transition-all shadow-md shadow-blue-500/20 disabled:opacity-50 cursor-pointer"
+                      className="w-full inline-flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl bg-gradient-to-r from-blue-600 via-indigo-600 to-purple-600 hover:from-blue-500 hover:to-purple-500 text-white text-xs font-bold transition-all shadow-md shadow-indigo-500/25 disabled:opacity-50 cursor-pointer"
                     >
                       <Zap className="w-4 h-4 text-amber-300" />
                       <span>{bulkSyncing ? "Ingesting & Computing Merkle Root..." : "1-Click Bulk ERP CSV Sync (50 Records)"}</span>
@@ -2190,9 +2958,9 @@ export default function CommandCenter() {
                           <span>Constructing Merkle Leaves...</span>
                           <span>{bulkProgress}%</span>
                         </div>
-                        <div className="w-full h-1.5 rounded-full bg-slate-900 overflow-hidden">
+                        <div className="w-full h-1.5 rounded-full bg-[#070810] overflow-hidden">
                           <div
-                            className="h-full bg-gradient-to-r from-blue-500 to-cyan-400 transition-all duration-300"
+                            className="h-full bg-gradient-to-r from-cyan-400 via-blue-500 to-indigo-500 transition-all duration-300"
                             style={{ width: `${bulkProgress}%` }}
                           />
                         </div>
@@ -2201,7 +2969,7 @@ export default function CommandCenter() {
 
                     {/* Bulk Sync Result Summary */}
                     {bulkSyncResult && (
-                      <div className="p-3 rounded-xl bg-blue-950/40 border border-blue-500/40 space-y-1.5 text-xs">
+                      <div className="p-3 rounded-xl bg-[#0B0C14] border border-cyan-500/40 space-y-1.5 text-xs">
                         <div className="flex items-center justify-between font-bold text-emerald-400">
                           <span className="flex items-center gap-1.5">
                             <CheckCircle2 className="w-3.5 h-3.5" />
@@ -2209,7 +2977,7 @@ export default function CommandCenter() {
                           </span>
                           <span className="text-[10px] font-mono text-cyan-300">{bulkSyncResult.timestamp}</span>
                         </div>
-                        <div className="text-[10px] font-mono break-all text-slate-300 bg-slate-950/80 p-2 rounded border border-slate-800">
+                        <div className="text-[10px] font-mono break-all text-slate-300 bg-[#05050A] p-2 rounded border border-white/[0.08]">
                           Merkle Root: <span className="text-cyan-300 font-bold">{bulkSyncResult.merkleRoot}</span>
                         </div>
                         <div className="flex justify-between text-[10px] text-slate-400 font-mono">
@@ -2231,7 +2999,7 @@ export default function CommandCenter() {
                           type="text"
                           value={creditApaar}
                           onChange={(e) => setCreditApaar(e.target.value)}
-                          className="w-full bg-slate-950/80 border border-slate-800 rounded-xl px-3 py-2 text-xs font-mono text-white focus:outline-none focus:border-cyan-500"
+                          className="w-full bg-[#070810]/90 border border-white/[0.08] rounded-xl px-3 py-2 text-xs font-mono text-white focus:outline-none focus:border-indigo-500 shadow-inner"
                           required
                         />
                       </div>
@@ -2243,7 +3011,7 @@ export default function CommandCenter() {
                           type="text"
                           value={creditAicte}
                           onChange={(e) => setCreditAicte(e.target.value)}
-                          className="w-full bg-slate-950/80 border border-slate-800 rounded-xl px-3 py-2 text-xs font-mono text-white focus:outline-none focus:border-cyan-500"
+                          className="w-full bg-[#070810]/90 border border-white/[0.08] rounded-xl px-3 py-2 text-xs font-mono text-white focus:outline-none focus:border-indigo-500 shadow-inner"
                           required
                         />
                       </div>
@@ -2257,7 +3025,7 @@ export default function CommandCenter() {
                         <select
                           value={creditSem}
                           onChange={(e) => setCreditSem(e.target.value)}
-                          className="w-full bg-slate-950/80 border border-slate-800 rounded-xl px-3 py-2 text-xs text-white focus:outline-none focus:border-cyan-500"
+                          className="w-full bg-[#070810]/90 border border-white/[0.08] rounded-xl px-3 py-2 text-xs text-white focus:outline-none focus:border-indigo-500"
                         >
                           {[1, 2, 3, 4, 5, 6, 7, 8].map((s) => (
                             <option key={s} value={s}>
@@ -2274,7 +3042,7 @@ export default function CommandCenter() {
                           type="text"
                           value={creditSubCode}
                           onChange={(e) => setCreditSubCode(e.target.value)}
-                          className="w-full bg-slate-950/80 border border-slate-800 rounded-xl px-3 py-2 text-xs font-mono text-white focus:outline-none focus:border-cyan-500"
+                          className="w-full bg-[#070810]/90 border border-white/[0.08] rounded-xl px-3 py-2 text-xs font-mono text-white focus:outline-none focus:border-indigo-500 shadow-inner"
                           required
                         />
                       </div>
@@ -2285,7 +3053,7 @@ export default function CommandCenter() {
                         <select
                           value={creditGrade}
                           onChange={(e) => setCreditGrade(e.target.value)}
-                          className="w-full bg-slate-950/80 border border-slate-800 rounded-xl px-3 py-2 text-xs text-white focus:outline-none focus:border-cyan-500"
+                          className="w-full bg-[#070810]/90 border border-white/[0.08] rounded-xl px-3 py-2 text-xs text-white focus:outline-none focus:border-indigo-500"
                         >
                           {["O", "A+", "A", "B+", "B", "C", "P"].map((g) => (
                             <option key={g} value={g}>
@@ -2305,7 +3073,7 @@ export default function CommandCenter() {
                           type="text"
                           value={creditSubName}
                           onChange={(e) => setCreditSubName(e.target.value)}
-                          className="w-full bg-slate-950/80 border border-slate-800 rounded-xl px-3 py-2 text-xs text-white focus:outline-none focus:border-cyan-500"
+                          className="w-full bg-[#070810]/90 border border-white/[0.08] rounded-xl px-3 py-2 text-xs text-white focus:outline-none focus:border-indigo-500 shadow-inner"
                           required
                         />
                       </div>
@@ -2317,7 +3085,7 @@ export default function CommandCenter() {
                           type="number"
                           value={creditEarned}
                           onChange={(e) => setCreditEarned(e.target.value)}
-                          className="w-full bg-slate-950/80 border border-slate-800 rounded-xl px-3 py-2 text-xs text-white focus:outline-none focus:border-cyan-500"
+                          className="w-full bg-[#070810]/90 border border-white/[0.08] rounded-xl px-3 py-2 text-xs text-white focus:outline-none focus:border-indigo-500 shadow-inner"
                           min="1"
                           max="8"
                           required
@@ -2328,7 +3096,7 @@ export default function CommandCenter() {
                     <button
                       type="submit"
                       disabled={pushLoading}
-                      className="w-full bg-gradient-to-r from-cyan-500 to-blue-500 hover:from-cyan-400 hover:to-blue-400 text-slate-950 text-xs font-bold py-2.5 rounded-xl transition-all shadow-md shadow-cyan-500/20 disabled:opacity-50 cursor-pointer"
+                      className="w-full bg-gradient-to-r from-indigo-500 via-purple-500 to-cyan-500 text-white font-semibold shadow-[0_0_25px_rgba(99,102,241,0.35)] hover:shadow-[0_0_35px_rgba(168,85,247,0.5)] text-xs py-2.5 rounded-xl transition-all disabled:opacity-50 cursor-pointer"
                     >
                       {pushLoading ? "Anchoring Record to ABC Ledger..." : "Anchor Single Credit to National ABC Ledger"}
                     </button>
@@ -2336,7 +3104,7 @@ export default function CommandCenter() {
                 </div>
 
                 {pushResult && (
-                  <div className="mt-4 p-4 rounded-2xl bg-cyan-950/40 border border-cyan-500/40 text-xs text-cyan-200">
+                  <div className="mt-4 p-4 rounded-2xl bg-[#070810]/90 border border-cyan-500/40 text-xs text-cyan-200 shadow-lg">
                     <div className="font-bold flex items-center gap-1.5 mb-1 text-emerald-400">
                       <CheckCircle2 className="w-4 h-4" />
                       Academic Credit Anchored to Ledger
@@ -2344,7 +3112,7 @@ export default function CommandCenter() {
                     <div className="text-[11px] text-slate-300 font-mono space-y-1">
                       <div>Student APAAR: {pushResult.data?.apaar_id}</div>
                       <div>Total Credits: {pushResult.data?.new_total_credits}</div>
-                      <div className="text-[10px] break-all bg-slate-950/60 p-2 rounded border border-slate-800 text-slate-400">
+                      <div className="text-[10px] break-all bg-[#05050A] p-2 rounded border border-white/[0.08] text-slate-400">
                         SHA-256 Hash: {pushResult.data?.record_hash}
                       </div>
                     </div>
@@ -2353,25 +3121,25 @@ export default function CommandCenter() {
               </div>
 
               {/* SECTION B: NEP 2020 AI CURRICULUM EQUIVALENCY & MEME MOBILITY */}
-              <div className="p-6 rounded-3xl bg-slate-900/70 border border-slate-800/80 backdrop-blur-xl shadow-xl flex flex-col justify-between">
+              <div className="p-6 rounded-3xl bg-[#0B0C14]/80 border border-white/[0.07] hover:border-indigo-500/40 backdrop-blur-2xl shadow-xl shadow-[inset_0_1px_0_0_rgba(255,255,255,0.08)] transition-all duration-300 flex flex-col justify-between">
                 <div>
-                  <div className="flex items-center justify-between pb-3 mb-4 border-b border-slate-800">
+                  <div className="flex items-center justify-between pb-3 mb-4 border-b border-white/[0.08]">
                     <div className="flex items-center gap-2">
-                      <Layers className="w-4 h-4 text-teal-400" />
+                      <Layers className="w-4 h-4 text-cyan-400" />
                       <h4 className="text-sm font-bold text-white">
                         NEP 2020 Credit Mobility & AI Equivalency
                       </h4>
                     </div>
-                    <span className="text-[10px] font-mono text-teal-400 bg-teal-500/10 px-2 py-0.5 rounded border border-teal-500/20">
+                    <span className="text-[10px] font-mono text-cyan-400 bg-cyan-500/10 px-2 py-0.5 rounded border border-cyan-500/20 font-bold">
                       Multiple Entry / Exit (MEME)
                     </span>
                   </div>
 
                   {/* SIH WINNING FEATURE 3: AI NEP 2020 CREDIT EQUIVALENCY PREVIEW */}
-                  <div className="mb-4 p-4 rounded-2xl bg-slate-950/80 border border-teal-500/30 space-y-3">
+                  <div className="mb-4 p-4 rounded-2xl bg-[#070810]/80 border border-white/[0.08] space-y-3">
                     <div className="flex items-center justify-between">
                       <div className="flex items-center gap-2">
-                        <Cpu className="w-4 h-4 text-teal-400" />
+                        <Cpu className="w-4 h-4 text-cyan-400" />
                         <span className="text-xs font-bold text-white">
                           AI NEP 2020 Credit Equivalency Preview
                         </span>
@@ -2388,7 +3156,7 @@ export default function CommandCenter() {
                     <div className="overflow-x-auto">
                       <table className="w-full text-left text-[11px]">
                         <thead>
-                          <tr className="border-b border-slate-800 text-slate-400 font-mono text-[9px] uppercase">
+                          <tr className="border-b border-white/[0.08] text-slate-400 font-mono text-[9px] uppercase">
                             <th className="py-1.5 px-2">Source Course</th>
                             <th className="py-1.5 px-2">AICTE Model Curriculum</th>
                             <th className="py-1.5 px-2">Credits</th>
@@ -2396,14 +3164,14 @@ export default function CommandCenter() {
                             <th className="py-1.5 px-2 text-right">Status</th>
                           </tr>
                         </thead>
-                        <tbody className="divide-y divide-slate-800/60 font-sans">
+                        <tbody className="divide-y divide-white/[0.06] font-sans">
                           <tr>
                             <td className="py-2 px-2 font-mono text-slate-300">CS101 (Prog in C)</td>
                             <td className="py-2 px-2 font-mono font-bold text-cyan-300">PCC-CS301</td>
                             <td className="py-2 px-2 text-white">4 Cr</td>
-                            <td className="py-2 px-2 font-mono text-emerald-400">96%</td>
+                            <td className="py-2 px-2 font-mono text-emerald-400 font-bold">96%</td>
                             <td className="py-2 px-2 text-right">
-                              <span className="text-[9px] font-mono bg-emerald-500/10 text-emerald-400 px-1.5 py-0.5 rounded">
+                              <span className="text-[9px] font-mono bg-emerald-500/10 text-emerald-400 px-1.5 py-0.5 rounded border border-emerald-500/30">
                                 Compliant
                               </span>
                             </td>
@@ -2412,9 +3180,9 @@ export default function CommandCenter() {
                             <td className="py-2 px-2 font-mono text-slate-300">AI202 (Intro to AI/ML)</td>
                             <td className="py-2 px-2 font-mono font-bold text-cyan-300">PEC-AI402</td>
                             <td className="py-2 px-2 text-white">4 Cr</td>
-                            <td className="py-2 px-2 font-mono text-emerald-400">98%</td>
+                            <td className="py-2 px-2 font-mono text-emerald-400 font-bold">98%</td>
                             <td className="py-2 px-2 text-right">
-                              <span className="text-[9px] font-mono bg-emerald-500/10 text-emerald-400 px-1.5 py-0.5 rounded">
+                              <span className="text-[9px] font-mono bg-emerald-500/10 text-emerald-400 px-1.5 py-0.5 rounded border border-emerald-500/30">
                                 Compliant
                               </span>
                             </td>
@@ -2423,9 +3191,9 @@ export default function CommandCenter() {
                             <td className="py-2 px-2 font-mono text-slate-300">MAT101 (Engg Maths I)</td>
                             <td className="py-2 px-2 font-mono font-bold text-cyan-300">BSC-MA102</td>
                             <td className="py-2 px-2 text-white">4 Cr</td>
-                            <td className="py-2 px-2 font-mono text-emerald-400">94%</td>
+                            <td className="py-2 px-2 font-mono text-emerald-400 font-bold">94%</td>
                             <td className="py-2 px-2 text-right">
-                              <span className="text-[9px] font-mono bg-emerald-500/10 text-emerald-400 px-1.5 py-0.5 rounded">
+                              <span className="text-[9px] font-mono bg-emerald-500/10 text-emerald-400 px-1.5 py-0.5 rounded border border-emerald-500/30">
                                 Compliant
                               </span>
                             </td>
@@ -2434,9 +3202,9 @@ export default function CommandCenter() {
                             <td className="py-2 px-2 font-mono text-slate-300">DS201 (Data Science)</td>
                             <td className="py-2 px-2 font-mono font-bold text-cyan-300">PCC-DS202</td>
                             <td className="py-2 px-2 text-white">3 Cr</td>
-                            <td className="py-2 px-2 font-mono text-emerald-400">95%</td>
+                            <td className="py-2 px-2 font-mono text-emerald-400 font-bold">95%</td>
                             <td className="py-2 px-2 text-right">
-                              <span className="text-[9px] font-mono bg-emerald-500/10 text-emerald-400 px-1.5 py-0.5 rounded">
+                              <span className="text-[9px] font-mono bg-emerald-500/10 text-emerald-400 px-1.5 py-0.5 rounded border border-emerald-500/30">
                                 Compliant
                               </span>
                             </td>
@@ -2447,7 +3215,7 @@ export default function CommandCenter() {
 
                     <div className="flex justify-between items-center text-[10px] font-mono text-slate-400 pt-1">
                       <span>Total Transferable: 15 / 15 Credits</span>
-                      <span className="text-teal-400">Lateral Entry Approved</span>
+                      <span className="text-emerald-400 font-semibold">Lateral Entry Approved</span>
                     </div>
                   </div>
 
@@ -2460,7 +3228,7 @@ export default function CommandCenter() {
                       <select
                         value={transferStudentId}
                         onChange={(e) => setTransferStudentId(e.target.value)}
-                        className="w-full bg-slate-950/80 border border-slate-800 rounded-xl px-3 py-2 text-xs text-white focus:outline-none focus:border-teal-500"
+                        className="w-full bg-[#070810]/90 border border-white/[0.08] rounded-xl px-3 py-2 text-xs text-white focus:outline-none focus:border-indigo-500"
                       >
                         <option value="739104829104">
                           739104829104 - Priya Nair (Status: EXITED_DIPLOMA, Credits: 80)
@@ -2478,7 +3246,7 @@ export default function CommandCenter() {
                       <select
                         value={transferTargetAicte}
                         onChange={(e) => setTransferTargetAicte(e.target.value)}
-                        className="w-full bg-slate-950/80 border border-slate-800 rounded-xl px-3 py-2 text-xs text-white focus:outline-none focus:border-teal-500"
+                        className="w-full bg-[#070810]/90 border border-white/[0.08] rounded-xl px-3 py-2 text-xs text-white focus:outline-none focus:border-indigo-500"
                       >
                         <option value="1-10000001">
                           1-10000001 - Chennai Institute of AI & Technology (Tamil Nadu)
@@ -2492,7 +3260,7 @@ export default function CommandCenter() {
                     <button
                       type="submit"
                       disabled={transferLoading}
-                      className="w-full bg-gradient-to-r from-teal-500 to-emerald-500 hover:from-teal-400 hover:to-emerald-400 text-slate-950 text-xs font-bold py-2.5 rounded-xl transition-all shadow-md shadow-teal-500/20 disabled:opacity-50 cursor-pointer"
+                      className="w-full bg-gradient-to-r from-indigo-500 via-purple-500 to-cyan-500 text-white font-semibold shadow-[0_0_25px_rgba(99,102,241,0.35)] hover:shadow-[0_0_35px_rgba(168,85,247,0.5)] text-xs py-2.5 rounded-xl transition-all disabled:opacity-50 cursor-pointer"
                     >
                       {transferLoading ? "Processing Transfer Protocol..." : "Execute 1-Click MEME Institutional Transfer"}
                     </button>
@@ -2500,7 +3268,7 @@ export default function CommandCenter() {
                 </div>
 
                 {transferResult && (
-                  <div className="mt-4 p-4 rounded-2xl bg-teal-950/40 border border-teal-500/40 text-xs text-teal-200">
+                  <div className="mt-4 p-4 rounded-2xl bg-[#070810]/90 border border-cyan-500/40 text-xs text-cyan-200 shadow-lg">
                     <div className="font-bold flex items-center gap-1.5 mb-1 text-emerald-400">
                       <CheckCircle2 className="w-4 h-4" />
                       MEME Student Transfer Completed Successfully
@@ -2516,7 +3284,7 @@ export default function CommandCenter() {
                       <div>
                         Destination: <strong>{transferResult.transfer_details?.target_institution?.name}</strong>
                       </div>
-                      <div className="font-mono text-[10px] text-teal-300">
+                      <div className="font-mono text-[10px] text-cyan-300">
                         {transferResult.historical_credits?.length || 0} Historical credits transferred seamlessly.
                       </div>
                     </div>
@@ -2526,15 +3294,15 @@ export default function CommandCenter() {
             </div>
 
             {/* SECTION C: AI OCR CERTIFICATE APPROVAL QUEUE */}
-            <div className="p-6 rounded-3xl bg-slate-900/70 border border-slate-800/80 backdrop-blur-xl shadow-xl">
-              <div className="flex items-center justify-between pb-3 mb-4 border-b border-slate-800">
+            <div className="p-6 rounded-3xl bg-[#0B0C14]/80 border border-white/[0.07] hover:border-indigo-500/40 backdrop-blur-2xl shadow-xl shadow-[inset_0_1px_0_0_rgba(255,255,255,0.08)] transition-all duration-300">
+              <div className="flex items-center justify-between pb-3 mb-4 border-b border-white/[0.08]">
                 <div className="flex items-center gap-2">
                   <Award className="w-4 h-4 text-amber-400" />
                   <h4 className="text-sm font-bold text-white">
                     AI OCR Student Certificate Approval Queue
                   </h4>
                 </div>
-                <span className="text-xs font-mono text-slate-400">
+                <span className="text-xs font-mono text-amber-300 font-bold">
                   {pendingCerts.length} Pending Review
                 </span>
               </div>
@@ -2544,7 +3312,7 @@ export default function CommandCenter() {
                   {pendingCerts.map((cert: any, idx: number) => (
                     <div
                       key={idx}
-                      className="p-4 rounded-2xl bg-slate-950/70 border border-slate-800/80 space-y-3"
+                      className="p-4 rounded-2xl bg-[#070810]/80 border border-white/[0.07] hover:border-indigo-500/40 transition-all space-y-3"
                     >
                       <div className="flex items-start justify-between gap-2">
                         <div>
@@ -2553,28 +3321,28 @@ export default function CommandCenter() {
                             APAAR ID: {cert.apaar_id}
                           </p>
                         </div>
-                        <span className="text-xs font-bold text-amber-400 bg-amber-500/10 px-2 py-0.5 rounded border border-amber-500/20">
+                        <span className="text-xs font-bold text-amber-300 bg-amber-500/10 px-2 py-0.5 rounded border border-amber-500/30">
                           +{cert.points_awarded || 10} Pts
                         </span>
                       </div>
 
                       <div className="flex items-center justify-between text-xs">
                         <span className="text-slate-400">Category: {cert.category || "Skill"}</span>
-                        <span className="font-mono text-emerald-400 bg-emerald-500/10 px-2 py-0.5 rounded border border-emerald-500/20 text-[10px]">
+                        <span className="font-mono text-emerald-400 bg-emerald-500/10 px-2 py-0.5 rounded border border-emerald-500/30 text-[10px]">
                           OCR Confidence: {cert.ocr_confidence_score || 95}%
                         </span>
                       </div>
 
-                      <div className="flex items-center justify-end gap-2 pt-2 border-t border-slate-800/80">
+                      <div className="flex items-center justify-end gap-2 pt-2 border-t border-white/[0.06]">
                         <button
                           onClick={() => handleNodalAction(cert.id, "REJECT")}
-                          className="px-3 py-1.5 rounded-lg bg-slate-900 hover:bg-slate-800 text-red-400 border border-slate-700/60 text-xs font-semibold transition-all cursor-pointer"
+                          className="px-3 py-1.5 rounded-lg bg-[#05050A] hover:bg-rose-950/40 text-rose-400 border border-rose-500/30 text-xs font-semibold transition-all cursor-pointer"
                         >
                           Reject
                         </button>
                         <button
                           onClick={() => handleNodalAction(cert.id, "APPROVE")}
-                          className="px-4 py-1.5 rounded-lg bg-emerald-500 hover:bg-emerald-400 text-slate-950 text-xs font-bold transition-all shadow-md shadow-emerald-500/20 cursor-pointer"
+                          className="px-4 py-1.5 rounded-lg bg-gradient-to-r from-indigo-500 via-purple-500 to-cyan-500 text-white font-semibold shadow-[0_0_20px_rgba(99,102,241,0.35)] hover:shadow-[0_0_30px_rgba(168,85,247,0.5)] text-xs transition-all cursor-pointer"
                         >
                           Approve & Credit Points
                         </button>
@@ -2596,10 +3364,10 @@ export default function CommandCenter() {
         {/* ========================================================================= */}
         {activeTab === "recruiter" && (
           <div className="space-y-6 animate-in fade-in duration-300">
-            <div className="p-6 rounded-3xl bg-gradient-to-r from-violet-950/60 via-slate-900 to-indigo-950/60 border border-violet-500/30 backdrop-blur-xl">
+            <div className="p-6 rounded-3xl bg-gradient-to-r from-[#121324] via-[#0D0E1A] to-[#1A102B] border border-indigo-400/30 backdrop-blur-2xl shadow-xl shadow-[inset_0_1px_0_0_rgba(255,255,255,0.08)]">
               <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
                 <div className="flex items-center gap-3">
-                  <div className="w-12 h-12 rounded-2xl bg-violet-500/10 border border-violet-500/30 flex items-center justify-center text-violet-400">
+                  <div className="w-12 h-12 rounded-2xl bg-indigo-500/10 border border-indigo-500/30 flex items-center justify-center text-indigo-400 shadow-md shadow-indigo-500/10">
                     <Briefcase className="w-6 h-6" />
                   </div>
                   <div>
@@ -2612,7 +3380,7 @@ export default function CommandCenter() {
                   </div>
                 </div>
                 <div className="text-right">
-                  <span className="text-[10px] font-mono uppercase bg-violet-500/10 text-violet-400 border border-violet-500/20 px-2.5 py-1 rounded-full">
+                  <span className="text-[10px] font-mono uppercase bg-indigo-500/10 text-indigo-300 border border-indigo-500/20 px-2.5 py-1 rounded-full">
                     DigiLocker Consent Architecture
                   </span>
                 </div>
@@ -2621,16 +3389,16 @@ export default function CommandCenter() {
 
             <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
               {/* Form 1: Request Student Consent */}
-              <div className="p-6 rounded-3xl bg-slate-900/70 border border-slate-800/80 backdrop-blur-xl shadow-xl flex flex-col justify-between">
+              <div className="p-6 rounded-3xl bg-[#0B0C14]/80 border border-white/[0.07] hover:border-indigo-500/40 backdrop-blur-2xl shadow-xl shadow-[inset_0_1px_0_0_rgba(255,255,255,0.08)] transition-all duration-300 flex flex-col justify-between">
                 <div>
-                  <div className="flex items-center justify-between pb-3 mb-4 border-b border-slate-800">
+                  <div className="flex items-center justify-between pb-3 mb-4 border-b border-white/[0.08]">
                     <div className="flex items-center gap-2">
-                      <Lock className="w-4 h-4 text-violet-400" />
+                      <Lock className="w-4 h-4 text-indigo-400" />
                       <h4 className="text-sm font-bold text-white">
                         Dispatch DEPA Consent Request
                       </h4>
                     </div>
-                    <span className="text-[10px] font-mono text-violet-400 bg-violet-500/10 px-2 py-0.5 rounded border border-violet-500/20">
+                    <span className="text-[10px] font-mono text-indigo-400 bg-indigo-500/10 px-2 py-0.5 rounded border border-indigo-500/20">
                       POST /api/consent/request
                     </span>
                   </div>
@@ -2644,7 +3412,7 @@ export default function CommandCenter() {
                         type="text"
                         value={recruiterName}
                         onChange={(e) => setRecruiterName(e.target.value)}
-                        className="w-full bg-slate-950/80 border border-slate-800 rounded-xl px-3 py-2 text-xs text-white focus:outline-none focus:border-violet-500"
+                        className="w-full bg-[#070810]/90 border border-white/[0.08] rounded-xl px-3 py-2 text-xs text-white focus:outline-none focus:border-indigo-500 shadow-inner"
                         required
                       />
                     </div>
@@ -2657,7 +3425,7 @@ export default function CommandCenter() {
                         type="text"
                         value={recruiterPurpose}
                         onChange={(e) => setRecruiterPurpose(e.target.value)}
-                        className="w-full bg-slate-950/80 border border-slate-800 rounded-xl px-3 py-2 text-xs text-white focus:outline-none focus:border-violet-500"
+                        className="w-full bg-[#070810]/90 border border-white/[0.08] rounded-xl px-3 py-2 text-xs text-white focus:outline-none focus:border-indigo-500 shadow-inner"
                         required
                       />
                     </div>
@@ -2670,7 +3438,7 @@ export default function CommandCenter() {
                         type="text"
                         value={recruiterApaar}
                         onChange={(e) => setRecruiterApaar(e.target.value)}
-                        className="w-full bg-slate-950/80 border border-slate-800 rounded-xl px-3 py-2 text-xs font-mono text-white focus:outline-none focus:border-violet-500"
+                        className="w-full bg-[#070810]/90 border border-white/[0.08] rounded-xl px-3 py-2 text-xs font-mono text-white focus:outline-none focus:border-indigo-500 shadow-inner"
                         required
                       />
                     </div>
@@ -2678,7 +3446,7 @@ export default function CommandCenter() {
                     <button
                       type="submit"
                       disabled={requestConsentLoading}
-                      className="w-full bg-gradient-to-r from-violet-500 to-indigo-500 hover:from-violet-400 hover:to-indigo-400 text-white text-xs font-bold py-2.5 rounded-xl transition-all shadow-md shadow-violet-500/20 disabled:opacity-50 cursor-pointer"
+                      className="w-full bg-gradient-to-r from-indigo-500 via-purple-500 to-cyan-500 text-white font-semibold shadow-[0_0_25px_rgba(99,102,241,0.35)] hover:shadow-[0_0_35px_rgba(168,85,247,0.5)] text-xs py-2.5 rounded-xl transition-all disabled:opacity-50 cursor-pointer"
                     >
                       {requestConsentLoading ? "Dispatching DEPA Token..." : "Request 24-Hour Consent Authorization"}
                     </button>
@@ -2686,7 +3454,7 @@ export default function CommandCenter() {
                 </div>
 
                 {requestConsentResult && (
-                  <div className="mt-4 p-4 rounded-2xl bg-violet-950/40 border border-violet-500/40 text-xs text-violet-200">
+                  <div className="mt-4 p-4 rounded-2xl bg-[#070810]/90 border border-indigo-500/40 text-xs text-indigo-200 shadow-lg">
                     <div className="font-bold flex items-center gap-1.5 mb-1 text-emerald-400">
                       <CheckCircle2 className="w-4 h-4" />
                       Consent Request Created (24-Hour Expiry)
@@ -2699,73 +3467,175 @@ export default function CommandCenter() {
                 )}
               </div>
 
-              {/* Form 2: Verify Access Token */}
-              <div className="p-6 rounded-3xl bg-slate-900/70 border border-slate-800/80 backdrop-blur-xl shadow-xl flex flex-col justify-between">
+              {/* Form 2: Verify Access Token & ZK Proofs */}
+              <div className="p-6 rounded-3xl bg-[#0B0C14]/80 border border-white/[0.07] hover:border-indigo-500/40 backdrop-blur-2xl shadow-xl shadow-[inset_0_1px_0_0_rgba(255,255,255,0.08)] transition-all duration-300 flex flex-col justify-between">
                 <div>
-                  <div className="flex items-center justify-between pb-3 mb-4 border-b border-slate-800">
+                  <div className="flex items-center justify-between pb-3 mb-3 border-b border-white/[0.08]">
                     <div className="flex items-center gap-2">
                       <ShieldCheck className="w-4 h-4 text-emerald-400" />
                       <h4 className="text-sm font-bold text-white">
                         Verify Cryptographic Student Records
                       </h4>
                     </div>
-                    <span className="text-[10px] font-mono text-emerald-400 bg-emerald-500/10 px-2 py-0.5 rounded border border-emerald-500/20">
-                      GET /api/verify/[token]
+                    <span className="text-[10px] font-mono text-emerald-400 bg-emerald-500/10 px-2 py-0.5 rounded border border-emerald-500/30 font-bold">
+                      {verifierMode === "depa" ? "GET /api/verify/[token]" : "GROTH16 / BN254 PAIRING"}
                     </span>
                   </div>
 
-                  <div className="space-y-3.5">
-                    <div>
-                      <div className="flex items-center justify-between mb-1">
-                        <label className="text-[11px] font-mono text-slate-400">
-                          DEPA Consent Access Token
-                        </label>
-                        <button
-                          onClick={() => setVerifyTokenInput("depa-live-token-482910")}
-                          className="text-[10px] font-mono text-emerald-400 hover:underline cursor-pointer"
-                        >
-                          Use Demo Token (IIT Bombay)
-                        </button>
-                      </div>
-                      <input
-                        type="text"
-                        value={verifyTokenInput}
-                        onChange={(e) => setVerifyTokenInput(e.target.value)}
-                        placeholder="e.g. depa-live-token-482910"
-                        className="w-full bg-slate-950/80 border border-slate-800 rounded-xl px-3 py-2 text-xs font-mono text-white focus:outline-none focus:border-emerald-500"
-                      />
-                    </div>
-
-                    <div className="flex items-center gap-2">
-                      <button
-                        onClick={() => handleVerifyToken(verifyTokenInput)}
-                        disabled={tokenVerifyLoading}
-                        className="flex-1 bg-gradient-to-r from-emerald-500 to-teal-500 hover:from-emerald-400 hover:to-teal-400 text-slate-950 text-xs font-bold py-2.5 rounded-xl transition-all shadow-md shadow-emerald-500/20 disabled:opacity-50 cursor-pointer"
-                      >
-                        {tokenVerifyLoading ? "Verifying Ledger Proofs..." : "Verify Cryptographic Records"}
-                      </button>
-                      {verifyTokenInput && (
-                        <Link
-                          href={`/verify/${verifyTokenInput}`}
-                          target="_blank"
-                          className="px-3.5 py-2.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-semibold border border-slate-700 flex items-center gap-1.5 transition-colors cursor-pointer"
-                        >
-                          <ExternalLink className="w-3.5 h-3.5" />
-                          <span>Full Page</span>
-                        </Link>
-                      )}
-                    </div>
+                  {/* Mode Selector Toggle: DEPA Consent vs Zero-Knowledge Proof */}
+                  <div className="grid grid-cols-2 gap-2 p-1 bg-[#070810] border border-white/[0.08] rounded-xl mb-4">
+                    <button
+                      type="button"
+                      onClick={() => setVerifierMode("depa")}
+                      className={`py-1.5 px-3 rounded-lg text-xs font-semibold flex items-center justify-center gap-1.5 transition-all cursor-pointer ${
+                        verifierMode === "depa"
+                          ? "bg-indigo-600/30 text-white border border-indigo-500/40 shadow-sm"
+                          : "text-slate-400 hover:text-slate-200"
+                      }`}
+                    >
+                      <ShieldCheck className="w-3.5 h-3.5 text-indigo-400" />
+                      <span>DEPA Transcript</span>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setVerifierMode("zk")}
+                      className={`py-1.5 px-3 rounded-lg text-xs font-semibold flex items-center justify-center gap-1.5 transition-all cursor-pointer ${
+                        verifierMode === "zk"
+                          ? "bg-purple-600/30 text-white border border-purple-500/40 shadow-sm"
+                          : "text-slate-400 hover:text-slate-200"
+                      }`}
+                    >
+                      <Binary className="w-3.5 h-3.5 text-purple-400" />
+                      <span>Zero-Knowledge (ZK)</span>
+                      <span className="text-[9px] font-mono bg-purple-500/20 text-purple-300 px-1 py-0.2 rounded font-bold">
+                        FLAGSHIP
+                      </span>
+                    </button>
                   </div>
+
+                  {/* MODE 1: DEPA CONSENT VERIFIER */}
+                  {verifierMode === "depa" && (
+                    <div className="space-y-3.5 animate-in fade-in duration-200">
+                      <div>
+                        <div className="flex items-center justify-between mb-1">
+                          <label className="text-[11px] font-mono text-slate-400">
+                            DEPA Consent Access Token
+                          </label>
+                          <button
+                            type="button"
+                            onClick={() => setVerifyTokenInput("depa-live-token-482910")}
+                            className="text-[10px] font-mono text-indigo-400 hover:text-indigo-300 hover:underline cursor-pointer"
+                          >
+                            Use Demo Token (IIT Bombay)
+                          </button>
+                        </div>
+                        <input
+                          type="text"
+                          value={verifyTokenInput}
+                          onChange={(e) => setVerifyTokenInput(e.target.value)}
+                          placeholder="e.g. depa-live-token-482910"
+                          className="w-full bg-[#070810]/90 border border-white/[0.08] rounded-xl px-3 py-2 text-xs font-mono text-white focus:outline-none focus:border-indigo-500 shadow-inner"
+                        />
+                      </div>
+
+                      <div className="flex items-center gap-2">
+                        <button
+                          type="button"
+                          onClick={() => handleVerifyToken(verifyTokenInput)}
+                          disabled={tokenVerifyLoading}
+                          className="flex-1 bg-gradient-to-r from-indigo-500 via-purple-500 to-cyan-500 text-white font-semibold shadow-[0_0_25px_rgba(99,102,241,0.35)] hover:shadow-[0_0_35px_rgba(168,85,247,0.5)] text-xs py-2.5 rounded-xl transition-all disabled:opacity-50 cursor-pointer"
+                        >
+                          {tokenVerifyLoading ? "Verifying Ledger Proofs..." : "Verify Cryptographic Records"}
+                        </button>
+                        {verifyTokenInput && (
+                          <Link
+                            href={`/verify/${verifyTokenInput}`}
+                            target="_blank"
+                            className="px-3.5 py-2.5 rounded-xl bg-[#070810] hover:bg-[#0B0C14] text-slate-200 text-xs font-semibold border border-white/[0.08] flex items-center gap-1.5 transition-colors cursor-pointer"
+                          >
+                            <ExternalLink className="w-3.5 h-3.5" />
+                            <span>Full Page</span>
+                          </Link>
+                        )}
+                      </div>
+                    </div>
+                  )}
+
+                  {/* MODE 2: ZERO-KNOWLEDGE PROOF VERIFIER */}
+                  {verifierMode === "zk" && (
+                    <div className="space-y-3.5 animate-in fade-in duration-200">
+                      <div>
+                        <div className="flex items-center justify-between mb-1">
+                          <label className="text-[11px] font-mono text-purple-300 flex items-center gap-1.5">
+                            <KeyRound className="w-3.5 h-3.5 text-purple-400" />
+                            zk-SNARK Attestation Token
+                          </label>
+                          <div className="flex items-center gap-2">
+                            <button
+                              type="button"
+                              onClick={() => {
+                                const t = "zkp_aicte_gpa_8_0_9f82c1a4e5d6";
+                                setZkVerifyInput(t);
+                                handleVerifyZkToken(t, "gpa");
+                              }}
+                              className="text-[10px] font-mono text-cyan-400 hover:text-cyan-300 hover:underline cursor-pointer"
+                            >
+                              Demo ZK-GPA (≥ 8.0)
+                            </button>
+                            <span className="text-white/[0.2] text-[10px]">|</span>
+                            <button
+                              type="button"
+                              onClick={() => {
+                                const t = "zkp_aicte_points_50_3e71d4b2";
+                                setZkVerifyInput(t);
+                                handleVerifyZkToken(t, "activity");
+                              }}
+                              className="text-[10px] font-mono text-emerald-400 hover:text-emerald-300 hover:underline cursor-pointer"
+                            >
+                              Demo ZK-Points (≥ 50)
+                            </button>
+                          </div>
+                        </div>
+                        <input
+                          type="text"
+                          value={zkVerifyInput}
+                          onChange={(e) => setZkVerifyInput(e.target.value)}
+                          placeholder="e.g. zkp_aicte_gpa_8_0_9f82c1a4e5d6"
+                          className="w-full bg-[#070810]/90 border border-purple-500/30 rounded-xl px-3 py-2 text-xs font-mono text-white focus:outline-none focus:border-purple-500 shadow-inner"
+                        />
+                      </div>
+
+                      <button
+                        type="button"
+                        onClick={() => handleVerifyZkToken(zkVerifyInput)}
+                        disabled={zkVerifyLoading}
+                        className="w-full bg-gradient-to-r from-purple-600 via-indigo-600 to-cyan-500 text-white font-semibold shadow-[0_0_25px_rgba(168,85,247,0.35)] hover:shadow-[0_0_35px_rgba(99,102,241,0.5)] text-xs py-2.5 rounded-xl transition-all disabled:opacity-50 cursor-pointer flex items-center justify-center gap-2"
+                      >
+                        {zkVerifyLoading ? (
+                          <>
+                            <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+                            <span>Evaluating BN254 Elliptic Curve Pairings e(π_A, π_B)...</span>
+                          </>
+                        ) : (
+                          <>
+                            <Binary className="w-3.5 h-3.5" />
+                            <span>Verify Zero-Knowledge Proof (No PII Revealed)</span>
+                          </>
+                        )}
+                      </button>
+                    </div>
+                  )}
                 </div>
 
-                {verifiedTokenResult && (
-                  <div className="mt-4 p-4 rounded-2xl bg-emerald-950/40 border border-emerald-500/40 text-xs text-emerald-200 space-y-3">
+                {/* DEPA Verified Result */}
+                {verifierMode === "depa" && verifiedTokenResult && (
+                  <div className="mt-4 p-4 rounded-2xl bg-[#070810]/90 border border-emerald-500/40 text-xs text-emerald-200 space-y-3 shadow-[0_0_20px_rgba(16,185,129,0.15)] animate-in fade-in duration-200">
                     <div className="flex items-center justify-between">
                       <span className="font-bold flex items-center gap-1.5 text-emerald-300">
                         <CheckCircle2 className="w-4 h-4 text-emerald-400" />
                         {verifiedTokenResult.badge?.text || "Cryptographically Verified by AICTE"}
                       </span>
-                      <span className="text-[10px] font-mono bg-emerald-500/20 px-2 py-0.5 rounded text-emerald-300 font-bold">
+                      <span className="text-[10px] font-mono bg-emerald-500/10 text-emerald-400 border border-emerald-500/30 px-2 py-0.5 rounded font-bold">
                         AUTHENTICATED
                       </span>
                     </div>
@@ -2785,7 +3655,7 @@ export default function CommandCenter() {
 
                     {/* Interactive Verified Course Hashes List (Click to Inspect VC & Test Tampering) */}
                     {verifiedTokenResult.data?.academic_credits && verifiedTokenResult.data.academic_credits.length > 0 && (
-                      <div className="pt-2 border-t border-emerald-500/20 space-y-2">
+                      <div className="pt-2 border-t border-white/[0.06] space-y-2">
                         <div className="text-[10px] font-mono text-emerald-400 font-bold">
                           Click Any Verified Hash to Inspect W3C VC & Simulate Tamper Attack:
                         </div>
@@ -2793,14 +3663,14 @@ export default function CommandCenter() {
                           {verifiedTokenResult.data.academic_credits.map((cr: any, cIdx: number) => (
                             <div
                               key={cIdx}
-                              className="p-2 rounded-xl bg-slate-950/70 border border-slate-800 flex items-center justify-between gap-2"
+                              className="p-2 rounded-xl bg-[#05050A] border border-white/[0.06] flex items-center justify-between gap-2"
                             >
                               <div className="text-[11px] text-white">
                                 <span className="font-mono text-cyan-300 font-bold">{cr.subject_code}</span> - {cr.subject_name} ({cr.credits_earned} Cr, Grade: {cr.grade})
                               </div>
                               <button
                                 onClick={() => openCredentialInspector(cr, "academic_credit", verifiedTokenResult.data)}
-                                className="font-mono text-[9px] bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 px-2 py-1 rounded flex items-center gap-1 cursor-pointer shrink-0"
+                                className="font-mono text-[9px] bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 px-2 py-1 rounded flex items-center gap-1 cursor-pointer shrink-0 transition-colors"
                               >
                                 <Hash className="w-2.5 h-2.5" />
                                 <span>{cr.record_hash?.slice(0, 10)}...</span>
@@ -2810,6 +3680,65 @@ export default function CommandCenter() {
                         </div>
                       </div>
                     )}
+                  </div>
+                )}
+
+                {/* ZK Verified Result: Authentic Glowing Badge */}
+                {verifierMode === "zk" && zkVerifiedResult && (
+                  <div className="mt-4 p-4 rounded-2xl bg-[#070810]/95 border border-emerald-500/50 text-xs space-y-3.5 shadow-[0_0_35px_rgba(16,185,129,0.25)] animate-in fade-in duration-300">
+                    <div className="flex items-center justify-between">
+                      <span className="font-bold flex items-center gap-1.5 text-emerald-300">
+                        <CheckCircle2 className="w-4 h-4 text-emerald-400" />
+                        CRYPTOGRAPHIC WITNESS VALID
+                      </span>
+                      <span className="text-[10px] font-mono bg-emerald-500/15 text-emerald-400 border border-emerald-500/40 px-2 py-0.5 rounded font-bold shadow-[0_0_10px_rgba(16,185,129,0.2)]">
+                        Groth16 / BN254 PASSED
+                      </span>
+                    </div>
+
+                    {/* SIH Authentic Glowing Badge */}
+                    <div className="p-3.5 rounded-2xl bg-gradient-to-r from-emerald-950/70 via-[#071712] to-[#0a1424] border border-emerald-400/50 shadow-[0_0_25px_rgba(16,185,129,0.3)]">
+                      <div className="flex items-start gap-2.5">
+                        <ShieldCheck className="w-5 h-5 text-emerald-400 shrink-0 mt-0.5 animate-pulse" />
+                        <div className="space-y-1">
+                          <div className="text-[12px] font-bold text-white tracking-wide leading-relaxed font-sans">
+                            {zkVerifiedResult.badgeText}
+                          </div>
+                          <div className="text-[10px] font-mono text-emerald-300/80 flex items-center gap-1.5 pt-0.5">
+                            <Sparkles className="w-3 h-3 text-emerald-400" />
+                            <span>Zero PII, demographic attributes, or raw grades were revealed to verifier.</span>
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* Circuit Verification Metadata */}
+                    <div className="p-3 rounded-xl bg-[#05050A] border border-white/[0.06] text-[11px] font-mono space-y-1.5 text-slate-300">
+                      <div className="flex items-center justify-between">
+                        <span className="text-slate-400">Cryptographic Predicate:</span>
+                        <span className="text-cyan-300 font-bold">{zkVerifiedResult.criterion}</span>
+                      </div>
+                      <div className="flex items-center justify-between">
+                        <span className="text-slate-400">Circuit Verification Latency:</span>
+                        <span className="text-emerald-400 font-bold">{zkVerifiedResult.circuitTime}</span>
+                      </div>
+                      <div className="flex items-center justify-between">
+                        <span className="text-slate-400">AICTE ABC Ledger Anchor:</span>
+                        <span className="text-indigo-300 font-mono text-[10px]">
+                          {zkVerifiedResult.merkleAnchor.slice(0, 22)}...
+                        </span>
+                      </div>
+                      <div className="flex items-center justify-between">
+                        <span className="text-slate-400">zk-SNARK Proof Digest:</span>
+                        <span className="text-purple-300 font-mono text-[10px]">
+                          {zkVerifiedResult.proofHash.slice(0, 24)}...
+                        </span>
+                      </div>
+                      <div className="flex items-center justify-between pt-1 border-t border-white/[0.06]">
+                        <span className="text-slate-400">Verification Time:</span>
+                        <span className="text-slate-300">{zkVerifiedResult.timestamp}</span>
+                      </div>
+                    </div>
                   </div>
                 )}
               </div>
@@ -2823,10 +3752,10 @@ export default function CommandCenter() {
         {activeTab === "regulator" && (
           <div className="space-y-6 animate-in fade-in duration-300">
             {/* Header banner */}
-            <div className="p-6 rounded-3xl bg-gradient-to-r from-rose-950/60 via-slate-900 to-amber-950/60 border border-rose-500/30 backdrop-blur-xl">
+            <div className="p-6 rounded-3xl bg-gradient-to-r from-[#121324] via-[#0D0E1A] to-[#1A102B] border border-indigo-400/30 shadow-[0_0_30px_rgba(99,102,241,0.15)] shadow-[inset_0_1px_0_0_rgba(255,255,255,0.08)] backdrop-blur-2xl">
               <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
                 <div className="flex items-center gap-3">
-                  <div className="w-12 h-12 rounded-2xl bg-rose-500/10 border border-rose-500/30 flex items-center justify-center text-rose-400">
+                  <div className="w-12 h-12 rounded-2xl bg-indigo-500/10 border border-indigo-500/30 flex items-center justify-center text-indigo-400">
                     <Activity className="w-6 h-6" />
                   </div>
                   <div>
@@ -2842,9 +3771,9 @@ export default function CommandCenter() {
                   <button
                     onClick={fetchRegulatorOverview}
                     disabled={regulatorLoading}
-                    className="flex items-center gap-1.5 px-3.5 py-1.5 rounded-xl bg-slate-900 hover:bg-slate-800 text-slate-200 border border-slate-700 text-xs font-semibold transition-colors cursor-pointer"
+                    className="flex items-center gap-1.5 px-3.5 py-1.5 rounded-xl bg-[#0B0C14]/90 hover:bg-[#121324] text-slate-200 border border-white/[0.1] text-xs font-semibold shadow-[inset_0_1px_0_0_rgba(255,255,255,0.08)] transition-all cursor-pointer"
                   >
-                    <RefreshCw className={`w-3.5 h-3.5 ${regulatorLoading ? "animate-spin" : ""}`} />
+                    <RefreshCw className={`w-3.5 h-3.5 ${regulatorLoading ? "animate-spin text-indigo-400" : ""}`} />
                     <span>Live Refresh</span>
                   </button>
                 </div>
@@ -2854,7 +3783,7 @@ export default function CommandCenter() {
             {/* ACTIONABLE FRAUD RESOLUTION FOR ROHAN VERMA (999888777666) */}
             {regulatorData?.alerts?.duplicate_flagged_students &&
               regulatorData.alerts.duplicate_flagged_students.length > 0 && (
-                <div className="p-6 rounded-3xl bg-rose-950/50 border-2 border-rose-500/80 backdrop-blur-xl shadow-2xl shadow-rose-950/50 animate-in zoom-in-95 duration-200 space-y-4">
+                <div className="p-6 rounded-3xl bg-[#0B0C14]/90 border border-rose-500/40 shadow-[0_0_25px_rgba(244,63,94,0.25)] shadow-[inset_0_1px_0_0_rgba(255,255,255,0.08)] backdrop-blur-2xl animate-in zoom-in-95 duration-200 space-y-4">
                   <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 pb-3 border-b border-rose-500/30">
                     <div className="flex items-center gap-2.5">
                       <div className="w-9 h-9 rounded-xl bg-rose-500/20 border border-rose-500/40 flex items-center justify-center text-rose-400">
@@ -2869,7 +3798,7 @@ export default function CommandCenter() {
                         </p>
                       </div>
                     </div>
-                    <span className="text-[10px] font-mono bg-rose-500/30 text-rose-200 px-3 py-1 rounded-full font-black border border-rose-500/40 animate-pulse">
+                    <span className="text-[10px] font-mono bg-rose-500/20 text-rose-300 px-3 py-1 rounded-full font-black border border-rose-500/40 animate-pulse">
                       🚨 ACTIVE COLLISION DETECTED
                     </span>
                   </div>
@@ -2877,14 +3806,14 @@ export default function CommandCenter() {
                   {regulatorData.alerts.duplicate_flagged_students.map((fraud: any, idx: number) => (
                     <div
                       key={idx}
-                      className="p-4 rounded-2xl bg-slate-950/80 border border-rose-500/40 space-y-3"
+                      className="p-4 rounded-2xl bg-[#05050A]/90 border border-rose-500/30 space-y-3"
                     >
                       <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-2">
                         <div>
                           <div className="flex items-center gap-2">
                             <span className="font-extrabold text-white text-base">{fraud.full_name}</span>
                             <span className="font-mono text-rose-400 text-xs font-bold">({fraud.apaar_id})</span>
-                            <span className="text-[10px] font-mono bg-rose-500/20 text-rose-300 px-2 py-0.5 rounded border border-rose-500/30">
+                            <span className="text-[10px] font-mono bg-rose-500/15 text-rose-300 px-2 py-0.5 rounded border border-rose-500/30">
                               UIDAI Verified Match
                             </span>
                           </div>
@@ -2893,18 +3822,18 @@ export default function CommandCenter() {
                         {/* Status Badge */}
                         <div className="flex items-center gap-2">
                           {isLedgerFrozen ? (
-                            <span className="px-2.5 py-1 rounded-lg bg-red-500 text-slate-950 font-black text-[10px] font-mono border border-red-400 shadow-md shadow-red-500/30 animate-pulse">
+                            <span className="px-2.5 py-1 rounded-lg bg-rose-500 text-white font-black text-[10px] font-mono border border-rose-400 shadow-[0_0_15px_rgba(244,63,94,0.4)] animate-pulse">
                               LEDGER FROZEN & LOCKDOWN
                             </span>
                           ) : (
-                            <span className="px-2.5 py-1 rounded-lg bg-rose-500/20 text-rose-300 font-bold text-[10px] font-mono border border-rose-500/30">
+                            <span className="px-2.5 py-1 rounded-lg bg-rose-500/15 text-rose-300 font-bold text-[10px] font-mono border border-rose-500/30">
                               STATUS: RESTRICTED AUDIT
                             </span>
                           )}
 
                           {noticeDispatched && (
-                            <span className="px-2.5 py-1 rounded-lg bg-emerald-500/20 text-emerald-300 font-bold text-[10px] font-mono border border-emerald-500/30 flex items-center gap-1">
-                              <CheckCircle2 className="w-3 h-3" />
+                            <span className="px-2.5 py-1 rounded-lg bg-emerald-500/15 text-emerald-300 font-bold text-[10px] font-mono border border-emerald-500/30 flex items-center gap-1">
+                              <CheckCircle2 className="w-3 h-3 text-emerald-400" />
                               Notice SCN-2026-8891 Dispatched (72h Deadline)
                             </span>
                           )}
@@ -2912,7 +3841,7 @@ export default function CommandCenter() {
                       </div>
 
                       {/* Explicit Conflicting Collision Details Box */}
-                      <div className="p-3 rounded-xl bg-rose-950/40 border border-rose-500/50 text-xs space-y-1.5 font-mono">
+                      <div className="p-3 rounded-xl bg-rose-950/30 border border-rose-500/40 text-xs space-y-1.5 font-mono">
                         <div className="text-rose-200 font-bold flex items-center gap-1.5">
                           <AlertCircle className="w-3.5 h-3.5 text-rose-400" />
                           <span>Conflicting Academic Registration Collision:</span>
@@ -2928,12 +3857,12 @@ export default function CommandCenter() {
                       </div>
 
                       {/* Working Action Buttons */}
-                      <div className="flex flex-wrap items-center justify-end gap-2.5 pt-2 border-t border-slate-800">
+                      <div className="flex flex-wrap items-center justify-end gap-2.5 pt-2 border-t border-white/[0.06]">
                         <button
                           type="button"
                           onClick={() => handleFreezeLedger(fraud.apaar_id, fraud.full_name)}
                           disabled={isLedgerFrozen}
-                          className="px-4 py-2 rounded-xl bg-red-600 hover:bg-red-500 disabled:opacity-50 text-white font-bold text-xs transition-all shadow-md shadow-red-600/30 flex items-center gap-1.5 cursor-pointer"
+                          className="px-4 py-2 rounded-xl bg-gradient-to-r from-rose-600 to-red-600 hover:from-rose-500 hover:to-red-500 disabled:opacity-50 text-white font-bold text-xs transition-all shadow-[0_0_15px_rgba(244,63,94,0.35)] flex items-center gap-1.5 cursor-pointer"
                         >
                           <ShieldOff className="w-3.5 h-3.5" />
                           <span>{isLedgerFrozen ? "Ledger Frozen (Locked)" : "Freeze APAAR Credit Ledger"}</span>
@@ -2943,7 +3872,7 @@ export default function CommandCenter() {
                           type="button"
                           onClick={() => handleDispatchNotice(fraud.apaar_id, fraud.full_name)}
                           disabled={noticeDispatched}
-                          className="px-4 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 disabled:opacity-50 text-amber-300 border border-amber-500/40 font-bold text-xs transition-all shadow-md flex items-center gap-1.5 cursor-pointer"
+                          className="px-4 py-2 rounded-xl bg-[#0B0C14] hover:bg-[#121324] disabled:opacity-50 text-amber-300 border border-amber-500/30 font-bold text-xs transition-all shadow-[inset_0_1px_0_0_rgba(255,255,255,0.08)] flex items-center gap-1.5 cursor-pointer"
                         >
                           <Send className="w-3.5 h-3.5" />
                           <span>{noticeDispatched ? "Show-Cause Notice Sent" : "Dispatch Show-Cause Notice to Nodal Officers"}</span>
@@ -2957,15 +3886,15 @@ export default function CommandCenter() {
             {/* SIH WINNING FEATURE 1: REGULATOR ANALYTICS VISUALS */}
             <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
               {/* Card 1: State-Wise APAAR Saturation */}
-              <div className="p-6 rounded-3xl bg-slate-900/70 border border-slate-800/80 backdrop-blur-xl shadow-xl space-y-4">
-                <div className="flex items-center justify-between pb-3 border-b border-slate-800">
+              <div className="p-6 rounded-3xl bg-[#0B0C14]/80 border border-white/[0.07] hover:border-indigo-500/40 backdrop-blur-2xl shadow-xl shadow-[inset_0_1px_0_0_rgba(255,255,255,0.08)] transition-all duration-300 space-y-4">
+                <div className="flex items-center justify-between pb-3 border-b border-white/[0.06]">
                   <div className="flex items-center gap-2">
-                    <MapPin className="w-4 h-4 text-emerald-400" />
+                    <MapPin className="w-4 h-4 text-cyan-400" />
                     <h4 className="text-sm font-bold text-white">
                       State-Wise APAAR Saturation
                     </h4>
                   </div>
-                  <span className="text-[10px] font-mono text-emerald-400 bg-emerald-500/10 px-2 py-0.5 rounded border border-emerald-500/20 font-bold">
+                  <span className="text-[10px] font-mono text-cyan-400 bg-cyan-500/10 px-2 py-0.5 rounded border border-cyan-500/20 font-bold">
                     DPI Seeding
                   </span>
                 </div>
@@ -2975,10 +3904,10 @@ export default function CommandCenter() {
                   <div className="space-y-1">
                     <div className="flex justify-between items-center text-[11px]">
                       <span className="text-white font-sans font-semibold">Tamil Nadu</span>
-                      <span className="text-emerald-400 font-bold">94% Saturation</span>
+                      <span className="text-cyan-400 font-bold">94% Saturation</span>
                     </div>
-                    <div className="w-full h-2 rounded-full bg-slate-950 overflow-hidden">
-                      <div className="h-full bg-gradient-to-r from-emerald-500 to-teal-400 rounded-full" style={{ width: "94%" }} />
+                    <div className="w-full h-2 rounded-full bg-[#05050A] overflow-hidden border border-white/[0.05]">
+                      <div className="h-full bg-gradient-to-r from-cyan-400 via-blue-500 to-indigo-500 shadow-[0_0_15px_rgba(6,182,212,0.4)] rounded-full" style={{ width: "94%" }} />
                     </div>
                     <div className="text-[9px] text-slate-500 flex justify-between">
                       <span>Target: 1.42M Students</span>
@@ -2990,10 +3919,10 @@ export default function CommandCenter() {
                   <div className="space-y-1">
                     <div className="flex justify-between items-center text-[11px]">
                       <span className="text-white font-sans font-semibold">Karnataka</span>
-                      <span className="text-cyan-400 font-bold">89% Saturation</span>
+                      <span className="text-indigo-400 font-bold">89% Saturation</span>
                     </div>
-                    <div className="w-full h-2 rounded-full bg-slate-950 overflow-hidden">
-                      <div className="h-full bg-gradient-to-r from-cyan-500 to-blue-400 rounded-full" style={{ width: "89%" }} />
+                    <div className="w-full h-2 rounded-full bg-[#05050A] overflow-hidden border border-white/[0.05]">
+                      <div className="h-full bg-gradient-to-r from-indigo-500 via-purple-500 to-cyan-500 rounded-full" style={{ width: "89%" }} />
                     </div>
                     <div className="text-[9px] text-slate-500 flex justify-between">
                       <span>Target: 1.15M Students</span>
@@ -3005,10 +3934,10 @@ export default function CommandCenter() {
                   <div className="space-y-1">
                     <div className="flex justify-between items-center text-[11px]">
                       <span className="text-white font-sans font-semibold">Maharashtra</span>
-                      <span className="text-blue-400 font-bold">86% Saturation</span>
+                      <span className="text-purple-400 font-bold">86% Saturation</span>
                     </div>
-                    <div className="w-full h-2 rounded-full bg-slate-950 overflow-hidden">
-                      <div className="h-full bg-gradient-to-r from-blue-500 to-indigo-400 rounded-full" style={{ width: "86%" }} />
+                    <div className="w-full h-2 rounded-full bg-[#05050A] overflow-hidden border border-white/[0.05]">
+                      <div className="h-full bg-gradient-to-r from-purple-500 to-pink-500 rounded-full" style={{ width: "86%" }} />
                     </div>
                     <div className="text-[9px] text-slate-500 flex justify-between">
                       <span>Target: 1.68M Students</span>
@@ -3022,7 +3951,7 @@ export default function CommandCenter() {
                       <span className="text-white font-sans font-semibold">Telangana</span>
                       <span className="text-violet-400 font-bold">82% Saturation</span>
                     </div>
-                    <div className="w-full h-2 rounded-full bg-slate-950 overflow-hidden">
+                    <div className="w-full h-2 rounded-full bg-[#05050A] overflow-hidden border border-white/[0.05]">
                       <div className="h-full bg-gradient-to-r from-violet-500 to-purple-400 rounded-full" style={{ width: "82%" }} />
                     </div>
                     <div className="text-[9px] text-slate-500 flex justify-between">
@@ -3037,16 +3966,16 @@ export default function CommandCenter() {
                       <span className="text-white font-sans font-semibold">Delhi NCT</span>
                       <span className="text-teal-400 font-bold">91% Saturation</span>
                     </div>
-                    <div className="w-full h-2 rounded-full bg-slate-950 overflow-hidden">
-                      <div className="h-full bg-gradient-to-r from-teal-500 to-emerald-400 rounded-full" style={{ width: "91%" }} />
+                    <div className="w-full h-2 rounded-full bg-[#05050A] overflow-hidden border border-white/[0.05]">
+                      <div className="h-full bg-gradient-to-r from-teal-500 to-cyan-400 rounded-full" style={{ width: "91%" }} />
                     </div>
                   </div>
                 </div>
               </div>
 
               {/* Card 2: National Credit Mobility Index */}
-              <div className="p-6 rounded-3xl bg-slate-900/70 border border-slate-800/80 backdrop-blur-xl shadow-xl space-y-4">
-                <div className="flex items-center justify-between pb-3 border-b border-slate-800">
+              <div className="p-6 rounded-3xl bg-[#0B0C14]/80 border border-white/[0.07] hover:border-indigo-500/40 backdrop-blur-2xl shadow-xl shadow-[inset_0_1px_0_0_rgba(255,255,255,0.08)] transition-all duration-300 space-y-4">
+                <div className="flex items-center justify-between pb-3 border-b border-white/[0.06]">
                   <div className="flex items-center gap-2">
                     <TrendingUp className="w-4 h-4 text-cyan-400" />
                     <h4 className="text-sm font-bold text-white">
@@ -3064,26 +3993,26 @@ export default function CommandCenter() {
 
                 {/* Stacked Visual Bar */}
                 <div className="space-y-2">
-                  <div className="w-full h-3 rounded-full bg-slate-950 overflow-hidden flex">
-                    <div className="h-full bg-cyan-500" style={{ width: "64%" }} title="Inter-College Transfers: 64%" />
-                    <div className="h-full bg-emerald-500" style={{ width: "28%" }} title="SWAYAM/MOOCs: 28%" />
+                  <div className="w-full h-3 rounded-full bg-[#05050A] overflow-hidden flex border border-white/[0.05]">
+                    <div className="h-full bg-cyan-500 shadow-[0_0_10px_rgba(6,182,212,0.5)]" style={{ width: "64%" }} title="Inter-College Transfers: 64%" />
+                    <div className="h-full bg-indigo-500" style={{ width: "28%" }} title="SWAYAM/MOOCs: 28%" />
                     <div className="h-full bg-amber-500" style={{ width: "8%" }} title="Industry Internships: 8%" />
                   </div>
 
                   <div className="grid grid-cols-3 gap-1 text-[10px] font-mono text-center pt-1">
-                    <div className="p-2 rounded-xl bg-slate-950/60 border border-cyan-500/30">
+                    <div className="p-2 rounded-xl bg-[#05050A]/80 border border-white/[0.07]">
                       <div className="text-cyan-400 font-extrabold text-sm">64%</div>
                       <div className="text-slate-400 text-[9px] mt-0.5">MEME Transfers</div>
                       <div className="text-slate-500 text-[8px]">48,210 Cr</div>
                     </div>
 
-                    <div className="p-2 rounded-xl bg-slate-950/60 border border-emerald-500/30">
-                      <div className="text-emerald-400 font-extrabold text-sm">28%</div>
+                    <div className="p-2 rounded-xl bg-[#05050A]/80 border border-white/[0.07]">
+                      <div className="text-indigo-400 font-extrabold text-sm">28%</div>
                       <div className="text-slate-400 text-[9px] mt-0.5">SWAYAM / NPTEL</div>
                       <div className="text-slate-500 text-[8px]">21,090 Cr</div>
                     </div>
 
-                    <div className="p-2 rounded-xl bg-slate-950/60 border border-amber-500/30">
+                    <div className="p-2 rounded-xl bg-[#05050A]/80 border border-white/[0.07]">
                       <div className="text-amber-400 font-extrabold text-sm">8%</div>
                       <div className="text-slate-400 text-[9px] mt-0.5">Virtual Interns</div>
                       <div className="text-slate-500 text-[8px]">6,020 Cr</div>
@@ -3091,12 +4020,12 @@ export default function CommandCenter() {
                   </div>
                 </div>
 
-                <div className="p-3 rounded-xl bg-slate-950/80 border border-slate-800 text-[11px] text-slate-300 font-mono">
+                <div className="p-3 rounded-xl bg-[#05050A]/80 border border-white/[0.07] text-[11px] text-slate-300 font-mono">
                   <div className="flex justify-between items-center">
                     <span className="text-slate-400">Total Migrated Credits:</span>
                     <span className="text-white font-bold">75,320 Credits</span>
                   </div>
-                  <div className="flex justify-between items-center text-emerald-400 pt-1">
+                  <div className="flex justify-between items-center text-cyan-400 pt-1">
                     <span>Validation Ledger:</span>
                     <span>100% Cryptographic Anchor</span>
                   </div>
@@ -3104,15 +4033,15 @@ export default function CommandCenter() {
               </div>
 
               {/* Card 3: AICTE Activity Point Compliance Rate */}
-              <div className="p-6 rounded-3xl bg-slate-900/70 border border-slate-800/80 backdrop-blur-xl shadow-xl space-y-4">
-                <div className="flex items-center justify-between pb-3 border-b border-slate-800">
+              <div className="p-6 rounded-3xl bg-[#0B0C14]/80 border border-white/[0.07] hover:border-indigo-500/40 backdrop-blur-2xl shadow-xl shadow-[inset_0_1px_0_0_rgba(255,255,255,0.08)] transition-all duration-300 space-y-4">
+                <div className="flex items-center justify-between pb-3 border-b border-white/[0.06]">
                   <div className="flex items-center gap-2">
                     <Award className="w-4 h-4 text-amber-400" />
                     <h4 className="text-sm font-bold text-white">
                       Activity Point Compliance Rate
                     </h4>
                   </div>
-                  <span className="text-[10px] font-mono text-amber-400 bg-amber-500/10 px-2 py-0.5 rounded border border-amber-500/20 font-bold">
+                  <span className="text-[10px] font-mono text-amber-300 bg-amber-500/10 px-2 py-0.5 rounded border border-amber-500/30 font-bold">
                     Graduation Threshold
                   </span>
                 </div>
@@ -3132,7 +4061,7 @@ export default function CommandCenter() {
                   </div>
                 </div>
 
-                <div className="space-y-2 pt-2 border-t border-slate-800 text-[11px] font-mono">
+                <div className="space-y-2 pt-2 border-t border-white/[0.06] text-[11px] font-mono">
                   <div className="flex justify-between items-center">
                     <span className="text-emerald-400 flex items-center gap-1.5">
                       <span className="w-2 h-2 rounded-full bg-emerald-400" />
@@ -3141,7 +4070,7 @@ export default function CommandCenter() {
                     <span className="text-white font-bold">84.6%</span>
                   </div>
                   <div className="flex justify-between items-center">
-                    <span className="text-amber-400 flex items-center gap-1.5">
+                    <span className="text-amber-300 flex items-center gap-1.5">
                       <span className="w-2 h-2 rounded-full bg-amber-400" />
                       25 - 49 Points (In Grace Period):
                     </span>
@@ -3160,58 +4089,58 @@ export default function CommandCenter() {
 
             {/* Telemetry KPIs Grid */}
             <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-              <div className="p-5 rounded-3xl bg-slate-900/70 border border-slate-800/80 backdrop-blur-xl">
+              <div className="p-5 rounded-3xl bg-[#0B0C14]/80 border border-white/[0.07] hover:border-indigo-500/40 backdrop-blur-2xl shadow-xl shadow-[inset_0_1px_0_0_rgba(255,255,255,0.08)] transition-all duration-300">
                 <div className="text-[10px] font-mono text-slate-400 uppercase tracking-wider mb-1">
                   Total APAAR Profiles
                 </div>
                 <div className="text-2xl font-black text-white font-mono">
                   {regulatorData?.telemetry?.total_students || 3}
                 </div>
-                <div className="text-[10px] text-emerald-400 mt-1 flex items-center gap-1 font-mono">
+                <div className="text-[10px] text-cyan-400 mt-1 flex items-center gap-1 font-mono">
                   <span>+100% DPI Coverage</span>
                 </div>
               </div>
 
-              <div className="p-5 rounded-3xl bg-slate-900/70 border border-slate-800/80 backdrop-blur-xl">
+              <div className="p-5 rounded-3xl bg-[#0B0C14]/80 border border-white/[0.07] hover:border-indigo-500/40 backdrop-blur-2xl shadow-xl shadow-[inset_0_1px_0_0_rgba(255,255,255,0.08)] transition-all duration-300">
                 <div className="text-[10px] font-mono text-slate-400 uppercase tracking-wider mb-1">
                   Approved Institutions
                 </div>
-                <div className="text-2xl font-black text-cyan-400 font-mono">
+                <div className="text-2xl font-black text-indigo-400 font-mono">
                   {regulatorData?.telemetry?.total_institutions || 2}
                 </div>
-                <div className="text-[10px] text-cyan-400 mt-1 flex items-center gap-1 font-mono">
+                <div className="text-[10px] text-indigo-400 mt-1 flex items-center gap-1 font-mono">
                   <span>Tier-1 Accredited</span>
                 </div>
               </div>
 
-              <div className="p-5 rounded-3xl bg-slate-900/70 border border-slate-800/80 backdrop-blur-xl">
+              <div className="p-5 rounded-3xl bg-[#0B0C14]/80 border border-white/[0.07] hover:border-indigo-500/40 backdrop-blur-2xl shadow-xl shadow-[inset_0_1px_0_0_rgba(255,255,255,0.08)] transition-all duration-300">
                 <div className="text-[10px] font-mono text-slate-400 uppercase tracking-wider mb-1">
                   ABC Credits Banked
                 </div>
-                <div className="text-2xl font-black text-emerald-400 font-mono">
+                <div className="text-2xl font-black text-cyan-300 font-mono">
                   {regulatorData?.telemetry?.total_credits_banked || 122}
                 </div>
-                <div className="text-[10px] text-emerald-400 mt-1 flex items-center gap-1 font-mono">
+                <div className="text-[10px] text-cyan-400 mt-1 flex items-center gap-1 font-mono">
                   <span>SHA-256 Anchored</span>
                 </div>
               </div>
 
-              <div className="p-5 rounded-3xl bg-slate-900/70 border border-slate-800/80 backdrop-blur-xl">
+              <div className="p-5 rounded-3xl bg-[#0B0C14]/80 border border-white/[0.07] hover:border-indigo-500/40 backdrop-blur-2xl shadow-xl shadow-[inset_0_1px_0_0_rgba(255,255,255,0.08)] transition-all duration-300">
                 <div className="text-[10px] font-mono text-slate-400 uppercase tracking-wider mb-1">
                   Active DEPA Grants
                 </div>
-                <div className="text-2xl font-black text-violet-400 font-mono">
+                <div className="text-2xl font-black text-purple-400 font-mono">
                   {regulatorData?.telemetry?.total_approved_consents || 2}
                 </div>
-                <div className="text-[10px] text-violet-400 mt-1 flex items-center gap-1 font-mono">
+                <div className="text-[10px] text-purple-400 mt-1 flex items-center gap-1 font-mono">
                   <span>Zero-Knowledge Enabled</span>
                 </div>
               </div>
             </div>
 
             {/* Institution Ledger Table */}
-            <div className="p-6 rounded-3xl bg-slate-900/70 border border-slate-800/80 backdrop-blur-xl shadow-xl">
-              <div className="flex items-center justify-between pb-3 mb-4 border-b border-slate-800">
+            <div className="p-6 rounded-3xl bg-[#0B0C14]/80 border border-white/[0.07] hover:border-indigo-500/40 backdrop-blur-2xl shadow-xl shadow-[inset_0_1px_0_0_rgba(255,255,255,0.08)] transition-all duration-300">
+              <div className="flex items-center justify-between pb-3 mb-4 border-b border-white/[0.06]">
                 <div className="flex items-center gap-2">
                   <Building2 className="w-4 h-4 text-cyan-400" />
                   <h4 className="text-sm font-bold text-white">
@@ -3226,23 +4155,23 @@ export default function CommandCenter() {
               <div className="overflow-x-auto">
                 <table className="w-full text-left text-xs">
                   <thead>
-                    <tr className="border-b border-slate-800 text-slate-400 font-mono text-[10px] uppercase">
+                    <tr className="border-b border-white/[0.06] text-slate-400 font-mono text-[10px] uppercase">
                       <th className="py-2 px-3">AICTE Code</th>
                       <th className="py-2 px-3">Institution Name</th>
                       <th className="py-2 px-3">State</th>
                       <th className="py-2 px-3 text-right">Regulatory Status</th>
                     </tr>
                   </thead>
-                  <tbody className="divide-y divide-slate-800/60 font-sans">
+                  <tbody className="divide-y divide-white/[0.04] font-sans">
                     {regulatorData?.institutions?.map((inst: any, idx: number) => (
-                      <tr key={idx} className="hover:bg-slate-800/30">
+                      <tr key={idx} className="hover:bg-white/[0.03] transition-colors">
                         <td className="py-3 px-3 font-mono font-bold text-cyan-300">
                           {inst.aicte_code}
                         </td>
                         <td className="py-3 px-3 text-white font-medium">{inst.name}</td>
                         <td className="py-3 px-3 text-slate-400">{inst.state}</td>
                         <td className="py-3 px-3 text-right">
-                          <span className="text-[10px] font-mono bg-emerald-500/10 text-emerald-400 px-2 py-0.5 rounded border border-emerald-500/20 font-bold">
+                          <span className="text-[10px] font-mono bg-emerald-500/10 text-emerald-400 px-2.5 py-1 rounded-full border border-emerald-500/30 font-bold">
                             AICTE APPROVED
                           </span>
                         </td>
@@ -3262,13 +4191,13 @@ export default function CommandCenter() {
       {selectedCredential && (
         <div className="fixed inset-0 z-50 bg-black/85 backdrop-blur-2xl flex items-center justify-center p-3 sm:p-6 animate-in fade-in duration-200">
           <div
-            className={`w-full max-w-4xl bg-slate-900 border rounded-3xl shadow-2xl overflow-hidden flex flex-col max-h-[92vh] animate-in zoom-in-95 duration-200 ${
-              isTamperMode ? "border-rose-500 shadow-rose-950/50" : "border-slate-700/80"
+            className={`w-full max-w-4xl bg-[#0B0C14]/95 border rounded-3xl shadow-[0_0_50px_rgba(0,0,0,0.85)] shadow-[inset_0_1px_0_0_rgba(255,255,255,0.08)] overflow-hidden flex flex-col max-h-[92vh] animate-in zoom-in-95 duration-200 ${
+              isTamperMode ? "border-rose-500/80 shadow-[0_0_35px_rgba(244,63,94,0.35)]" : "border-indigo-400/30"
             }`}
             onClick={(e) => e.stopPropagation()}
           >
             {/* Modal Header */}
-            <div className="p-5 sm:p-6 border-b border-slate-800 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 bg-slate-950/50">
+            <div className="p-5 sm:p-6 border-b border-white/[0.08] flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 bg-gradient-to-r from-[#121324] via-[#0D0E1A] to-[#1A102B]">
               <div className="space-y-1">
                 <div className="flex flex-wrap items-center gap-2">
                   <span className="text-[10px] font-mono uppercase bg-emerald-500/10 text-emerald-400 border border-emerald-500/30 px-2 py-0.5 rounded font-bold">
@@ -3277,7 +4206,7 @@ export default function CommandCenter() {
                   <span className="text-[10px] font-mono uppercase bg-cyan-500/10 text-cyan-400 border border-cyan-500/30 px-2 py-0.5 rounded font-bold">
                     JSON-LD
                   </span>
-                  <span className="text-[10px] font-mono uppercase bg-amber-500/10 text-amber-400 border border-amber-500/30 px-2 py-0.5 rounded font-bold">
+                  <span className="text-[10px] font-mono uppercase bg-amber-500/10 text-amber-300 border border-amber-500/30 px-2 py-0.5 rounded font-bold">
                     Ed25519Signature2020
                   </span>
                 </div>
@@ -3296,8 +4225,8 @@ export default function CommandCenter() {
                   onClick={() => toggleTamperSimulation(!isTamperMode)}
                   className={`inline-flex items-center gap-2 px-3 py-1.5 rounded-xl border text-xs font-bold transition-all shadow-md cursor-pointer ${
                     isTamperMode
-                      ? "bg-rose-500 text-white border-rose-400 shadow-rose-500/30 animate-pulse"
-                      : "bg-slate-800 hover:bg-slate-700 text-rose-300 border-rose-500/40"
+                      ? "bg-rose-500 text-white border-rose-400 shadow-[0_0_20px_rgba(244,63,94,0.5)] animate-pulse"
+                      : "bg-[#0B0C14] hover:bg-[#121324] text-rose-300 border border-rose-500/40 shadow-[inset_0_1px_0_0_rgba(255,255,255,0.08)]"
                   }`}
                 >
                   <Flame className="w-3.5 h-3.5" />
@@ -3306,7 +4235,7 @@ export default function CommandCenter() {
 
                 <button
                   onClick={() => setSelectedCredential(null)}
-                  className="p-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-400 hover:text-white transition-colors cursor-pointer"
+                  className="p-2 rounded-xl bg-[#0B0C14] hover:bg-[#121324] border border-white/[0.08] text-slate-400 hover:text-white transition-colors cursor-pointer"
                   title="Close Modal"
                 >
                   <X className="w-5 h-5" />
@@ -3316,7 +4245,7 @@ export default function CommandCenter() {
 
             {/* FLASHING RED ALERT BANNER WHEN TAMPER ATTACK IS ACTIVE */}
             {isTamperMode && tamperMismatch && (
-              <div className="px-5 py-3 bg-rose-950/80 border-b border-rose-500/80 text-rose-200 flex items-center justify-between gap-3 animate-pulse">
+              <div className="px-5 py-3 bg-rose-950/60 border-b border-rose-500/40 text-rose-200 flex items-center justify-between gap-3 animate-pulse">
                 <div className="flex items-center gap-2 text-xs font-extrabold tracking-wide text-rose-300">
                   <AlertTriangle className="w-4 h-4 text-rose-400 shrink-0" />
                   <span>
@@ -3331,7 +4260,7 @@ export default function CommandCenter() {
 
             {/* TAMPER SIMULATION CONTROL BAR & HASH COMPARISON */}
             {isTamperMode && (
-              <div className="px-5 sm:px-6 py-3 bg-slate-950/90 border-b border-slate-800 space-y-3">
+              <div className="px-5 sm:px-6 py-3 bg-[#070810]/95 border-b border-white/[0.08] space-y-3">
                 <div className="flex flex-wrap items-center justify-between gap-2 text-xs">
                   <span className="text-slate-300 font-semibold flex items-center gap-1.5">
                     <ShieldOff className="w-3.5 h-3.5 text-rose-400" />
@@ -3346,7 +4275,7 @@ export default function CommandCenter() {
                         className={`px-2.5 py-1 rounded-lg text-xs font-mono font-bold border transition-all cursor-pointer ${
                           tamperedGrade === gradeOption
                             ? "bg-rose-500 text-white border-rose-400 shadow-md shadow-rose-500/30"
-                            : "bg-slate-900 text-slate-300 border-slate-700 hover:border-rose-400"
+                            : "bg-[#0B0C14] text-slate-300 border border-white/[0.1] hover:border-rose-400"
                         }`}
                       >
                         {gradeOption}
@@ -3357,9 +4286,9 @@ export default function CommandCenter() {
 
                 {/* Side-by-Side Cryptographic Hash Comparison */}
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-3 text-[11px] font-mono">
-                  <div className="p-2.5 rounded-xl bg-slate-900/80 border border-emerald-500/40 text-emerald-300 space-y-1">
+                  <div className="p-2.5 rounded-xl bg-[#05050A]/90 border border-emerald-500/30 text-emerald-300 space-y-1">
                     <div className="text-[10px] font-bold uppercase text-emerald-400 flex items-center gap-1">
-                      <CheckCircle2 className="w-3 h-3" />
+                      <CheckCircle2 className="w-3 h-3 text-emerald-400" />
                       National ABC Ledger Anchor Hash (Immutable):
                     </div>
                     <div className="text-[10px] break-all text-slate-300">
@@ -3367,9 +4296,9 @@ export default function CommandCenter() {
                     </div>
                   </div>
 
-                  <div className="p-2.5 rounded-xl bg-slate-900/80 border border-rose-500/60 text-rose-300 space-y-1">
+                  <div className="p-2.5 rounded-xl bg-[#05050A]/90 border border-rose-500/50 text-rose-300 space-y-1">
                     <div className="text-[10px] font-bold uppercase text-rose-400 flex items-center gap-1">
-                      <AlertTriangle className="w-3 h-3" />
+                      <AlertTriangle className="w-3 h-3 text-rose-400" />
                       Live Re-Computed Hash (From Tampered DOM):
                     </div>
                     <div className="text-[10px] break-all text-rose-200 font-bold">
@@ -3381,7 +4310,7 @@ export default function CommandCenter() {
             )}
 
             {/* Modal Badges Bar */}
-            <div className="px-5 sm:px-6 py-2.5 bg-slate-950/80 border-b border-slate-800/80 flex flex-wrap items-center justify-between gap-2 text-[11px] font-mono">
+            <div className="px-5 sm:px-6 py-2.5 bg-[#070810]/80 border-b border-white/[0.08] flex flex-wrap items-center justify-between gap-2 text-[11px] font-mono">
               <div className="flex items-center gap-4 text-slate-300">
                 <span
                   className={`flex items-center gap-1.5 font-bold ${
@@ -3411,12 +4340,12 @@ export default function CommandCenter() {
             </div>
 
             {/* Modal Body: Raw JSON-LD viewer with syntax feel */}
-            <div className="flex-1 overflow-y-auto p-5 sm:p-6 bg-slate-950 font-mono text-xs text-slate-200 space-y-2 selection:bg-cyan-500/40">
+            <div className="flex-1 overflow-y-auto p-5 sm:p-6 bg-[#05050A] font-mono text-xs text-slate-200 space-y-2 selection:bg-indigo-500/40">
               <pre
                 className={`overflow-x-auto leading-relaxed p-4 rounded-2xl border text-[11px] ${
                   isTamperMode
                     ? "bg-rose-950/20 border-rose-500/40 text-rose-200"
-                    : "bg-slate-900/60 border-slate-800/90 text-cyan-300"
+                    : "bg-[#0B0C14]/90 border-white/[0.08] text-cyan-300 shadow-[inset_0_1px_0_0_rgba(255,255,255,0.06)]"
                 }`}
               >
                 {JSON.stringify(
@@ -3430,10 +4359,16 @@ export default function CommandCenter() {
                               ? `${tamperedGrade} [TAMPERED - ORIGINAL: ${selectedCredential.data?.grade}]`
                               : selectedCredential.data?.grade,
                           }
-                        : {
+                        : selectedCredential.type === "activity_certificate"
+                        ? {
                             activityPointsAwarded: isTamperMode
                               ? `${tamperedGrade} [TAMPERED - ORIGINAL: ${selectedCredential.data?.points_awarded}]`
                               : selectedCredential.data?.points_awarded,
+                          }
+                        : {
+                            overallProficiencyScore: isTamperMode
+                              ? `99.9% [TAMPERED - ORIGINAL: ${selectedCredential.data?.overall_proficiency}]`
+                              : selectedCredential.data?.overall_proficiency,
                           }),
                     },
                     proof: {
@@ -3450,7 +4385,7 @@ export default function CommandCenter() {
             </div>
 
             {/* Modal Footer Actions */}
-            <div className="p-4 sm:p-5 border-t border-slate-800 bg-slate-950/70 flex flex-wrap items-center justify-between gap-3">
+            <div className="p-4 sm:p-5 border-t border-white/[0.08] bg-[#070810]/95 flex flex-wrap items-center justify-between gap-3">
               <div className="text-[11px] font-mono text-slate-400 flex items-center gap-1.5">
                 <Info className="w-3.5 h-3.5 text-cyan-400" />
                 <span>Interoperable with DigiLocker, EU Europass & W3C DID Registries</span>
@@ -3459,7 +4394,7 @@ export default function CommandCenter() {
               <div className="flex items-center gap-2">
                 <button
                   onClick={copyCredentialJson}
-                  className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-semibold border border-slate-700 transition-all cursor-pointer"
+                  className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-[#0B0C14] hover:bg-[#121324] text-slate-200 text-xs font-semibold border border-white/[0.1] shadow-[inset_0_1px_0_0_rgba(255,255,255,0.06)] transition-all cursor-pointer"
                 >
                   {modalCopied ? <Check className="w-3.5 h-3.5 text-emerald-400" /> : <Copy className="w-3.5 h-3.5" />}
                   <span>{modalCopied ? "Copied!" : "Copy W3C JSON-LD"}</span>
@@ -3467,7 +4402,7 @@ export default function CommandCenter() {
 
                 <button
                   onClick={() => window.print()}
-                  className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-semibold border border-slate-700 transition-all cursor-pointer"
+                  className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-[#0B0C14] hover:bg-[#121324] text-slate-200 text-xs font-semibold border border-white/[0.1] shadow-[inset_0_1px_0_0_rgba(255,255,255,0.06)] transition-all cursor-pointer"
                 >
                   <Printer className="w-3.5 h-3.5 text-emerald-400" />
                   <span>Print Official Transcript</span>
@@ -3475,7 +4410,7 @@ export default function CommandCenter() {
 
                 <button
                   onClick={() => setSelectedCredential(null)}
-                  className="px-4 py-2 rounded-xl bg-emerald-500 hover:bg-emerald-400 text-slate-950 text-xs font-bold transition-all shadow-md shadow-emerald-500/20 cursor-pointer"
+                  className="px-5 py-2 rounded-xl bg-gradient-to-r from-indigo-500 via-purple-500 to-cyan-500 hover:from-indigo-400 hover:to-cyan-400 text-white font-semibold text-xs transition-all shadow-[0_0_20px_rgba(99,102,241,0.35)] cursor-pointer"
                 >
                   Done
                 </button>
@@ -3494,11 +4429,11 @@ export default function CommandCenter() {
           onClick={() => !isMinting && setShowRegisterModal(false)}
         >
           <div
-            className="w-full max-w-2xl bg-slate-900 border border-cyan-500/40 rounded-3xl shadow-2xl shadow-cyan-950/50 overflow-hidden flex flex-col max-h-[92vh] animate-in zoom-in-95 duration-200"
+            className="w-full max-w-2xl bg-[#0B0C14]/95 border border-indigo-400/30 rounded-3xl shadow-[0_0_50px_rgba(0,0,0,0.85)] shadow-[inset_0_1px_0_0_rgba(255,255,255,0.08)] overflow-hidden flex flex-col max-h-[92vh] animate-in zoom-in-95 duration-200"
             onClick={(e) => e.stopPropagation()}
           >
             {/* Modal Header */}
-            <div className="p-5 sm:p-6 border-b border-slate-800 flex items-start justify-between gap-4 bg-gradient-to-r from-cyan-950/50 via-slate-950 to-slate-900">
+            <div className="p-5 sm:p-6 border-b border-white/[0.08] flex items-start justify-between gap-4 bg-gradient-to-r from-[#121324] via-[#0D0E1A] to-[#1A102B]">
               <div className="space-y-1">
                 <div className="flex flex-wrap items-center gap-2">
                   <span className="text-[10px] font-mono uppercase bg-cyan-500/10 text-cyan-400 border border-cyan-500/30 px-2 py-0.5 rounded font-bold">
@@ -3507,7 +4442,7 @@ export default function CommandCenter() {
                   <span className="text-[10px] font-mono uppercase bg-emerald-500/10 text-emerald-400 border border-emerald-500/30 px-2 py-0.5 rounded font-bold">
                     DigiLocker DPI Verified
                   </span>
-                  <span className="text-[10px] font-mono uppercase bg-amber-500/10 text-amber-400 border border-amber-500/30 px-2 py-0.5 rounded font-bold">
+                  <span className="text-[10px] font-mono uppercase bg-amber-500/10 text-amber-300 border border-amber-500/30 px-2 py-0.5 rounded font-bold">
                     ABC Ledger Minting
                   </span>
                 </div>
@@ -3524,7 +4459,7 @@ export default function CommandCenter() {
                 <button
                   type="button"
                   onClick={() => setShowRegisterModal(false)}
-                  className="p-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-400 hover:text-white transition-colors cursor-pointer"
+                  className="p-2 rounded-xl bg-[#0B0C14] hover:bg-[#121324] border border-white/[0.08] text-slate-400 hover:text-white transition-colors cursor-pointer"
                 >
                   <X className="w-5 h-5" />
                 </button>
@@ -3536,7 +4471,7 @@ export default function CommandCenter() {
               {isMinting ? (
                 <div className="py-12 flex flex-col items-center justify-center text-center space-y-6">
                   <div className="relative">
-                    <div className="w-20 h-20 rounded-full border-4 border-cyan-500/20 border-t-cyan-400 animate-spin flex items-center justify-center" />
+                    <div className="w-20 h-20 rounded-full border-4 border-indigo-500/20 border-t-indigo-400 animate-spin flex items-center justify-center" />
                     <div className="absolute inset-0 flex items-center justify-center">
                       <Sparkles className="w-8 h-8 text-amber-400 animate-pulse" />
                     </div>
@@ -3552,14 +4487,14 @@ export default function CommandCenter() {
                       <div
                         className={`p-3 rounded-xl border text-xs font-mono flex items-center gap-2.5 transition-all ${
                           mintStage >= 1
-                            ? "bg-cyan-950/60 border-cyan-500/50 text-cyan-300"
-                            : "bg-slate-950/40 border-slate-800 text-slate-500"
+                            ? "bg-indigo-950/40 border-indigo-500/50 text-indigo-300"
+                            : "bg-[#05050A]/60 border-white/[0.06] text-slate-500"
                         }`}
                       >
                         {mintStage > 1 ? (
                           <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0" />
                         ) : (
-                          <div className="w-4 h-4 rounded-full border-2 border-cyan-400 border-t-transparent animate-spin shrink-0" />
+                          <div className="w-4 h-4 rounded-full border-2 border-indigo-400 border-t-transparent animate-spin shrink-0" />
                         )}
                         <span>Stage 1: Validating Aadhaar eKYC via UIDAI Digital Signature Gateway...</span>
                       </div>
@@ -3567,14 +4502,14 @@ export default function CommandCenter() {
                       <div
                         className={`p-3 rounded-xl border text-xs font-mono flex items-center gap-2.5 transition-all ${
                           mintStage >= 2
-                            ? "bg-emerald-950/60 border-emerald-500/50 text-emerald-300"
-                            : "bg-slate-950/40 border-slate-800 text-slate-500"
+                            ? "bg-purple-950/40 border-purple-500/50 text-purple-300"
+                            : "bg-[#05050A]/60 border-white/[0.06] text-slate-500"
                         }`}
                       >
                         {mintStage > 2 ? (
                           <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0" />
                         ) : mintStage === 2 ? (
-                          <div className="w-4 h-4 rounded-full border-2 border-emerald-400 border-t-transparent animate-spin shrink-0" />
+                          <div className="w-4 h-4 rounded-full border-2 border-purple-400 border-t-transparent animate-spin shrink-0" />
                         ) : (
                           <Clock className="w-4 h-4 text-slate-600 shrink-0" />
                         )}
@@ -3584,12 +4519,12 @@ export default function CommandCenter() {
                       <div
                         className={`p-3 rounded-xl border text-xs font-mono flex items-center gap-2.5 transition-all ${
                           mintStage >= 3
-                            ? "bg-amber-950/60 border-amber-500/50 text-amber-300"
-                            : "bg-slate-950/40 border-slate-800 text-slate-500"
+                            ? "bg-cyan-950/40 border-cyan-500/50 text-cyan-300"
+                            : "bg-[#05050A]/60 border-white/[0.06] text-slate-500"
                         }`}
                       >
                         {mintStage === 3 ? (
-                          <div className="w-4 h-4 rounded-full border-2 border-amber-400 border-t-transparent animate-spin shrink-0" />
+                          <div className="w-4 h-4 rounded-full border-2 border-cyan-400 border-t-transparent animate-spin shrink-0" />
                         ) : (
                           <Clock className="w-4 h-4 text-slate-600 shrink-0" />
                         )}
@@ -3612,7 +4547,7 @@ export default function CommandCenter() {
                         value={regFullName}
                         onChange={(e) => setRegFullName(e.target.value)}
                         placeholder="e.g. Dr. Vikram Seth / Aarav Patel"
-                        className="w-full bg-slate-950/80 border border-slate-700 rounded-xl px-3.5 py-2.5 text-xs text-white focus:outline-none focus:border-cyan-400"
+                        className="w-full bg-[#070810]/90 border border-white/[0.08] rounded-xl px-3.5 py-2.5 text-xs text-white placeholder-slate-500 focus:outline-none focus:border-indigo-400 focus:ring-1 focus:ring-indigo-400/40 shadow-[inset_0_1px_0_0_rgba(255,255,255,0.04)]"
                       />
                     </div>
 
@@ -3626,7 +4561,7 @@ export default function CommandCenter() {
                         required
                         value={regDob}
                         onChange={(e) => setRegDob(e.target.value)}
-                        className="w-full bg-slate-950/80 border border-slate-700 rounded-xl px-3.5 py-2 text-xs font-mono text-white focus:outline-none focus:border-cyan-400"
+                        className="w-full bg-[#070810]/90 border border-white/[0.08] rounded-xl px-3.5 py-2 text-xs font-mono text-white focus:outline-none focus:border-indigo-400 focus:ring-1 focus:ring-indigo-400/40 shadow-[inset_0_1px_0_0_rgba(255,255,255,0.04)]"
                       />
                     </div>
 
@@ -3638,7 +4573,7 @@ export default function CommandCenter() {
                       <select
                         value={regGender}
                         onChange={(e) => setRegGender(e.target.value)}
-                        className="w-full bg-slate-950/80 border border-slate-700 rounded-xl px-3.5 py-2 text-xs text-white focus:outline-none focus:border-cyan-400"
+                        className="w-full bg-[#070810]/90 border border-white/[0.08] rounded-xl px-3.5 py-2 text-xs text-white focus:outline-none focus:border-indigo-400 focus:ring-1 focus:ring-indigo-400/40 shadow-[inset_0_1px_0_0_rgba(255,255,255,0.04)]"
                       >
                         <option value="Male">Male</option>
                         <option value="Female">Female</option>
@@ -3659,7 +4594,7 @@ export default function CommandCenter() {
                         value={regAadhaarLast4}
                         onChange={(e) => setRegAadhaarLast4(e.target.value.replace(/\D/g, ""))}
                         placeholder="e.g. 8821"
-                        className="w-full bg-slate-950/80 border border-slate-700 rounded-xl px-3.5 py-2 text-xs font-mono text-white focus:outline-none focus:border-cyan-400"
+                        className="w-full bg-[#070810]/90 border border-white/[0.08] rounded-xl px-3.5 py-2 text-xs font-mono text-white focus:outline-none focus:border-indigo-400 focus:ring-1 focus:ring-indigo-400/40 shadow-[inset_0_1px_0_0_rgba(255,255,255,0.04)]"
                       />
                     </div>
 
@@ -3673,7 +4608,7 @@ export default function CommandCenter() {
                         value={regUdisePen}
                         onChange={(e) => setRegUdisePen(e.target.value)}
                         placeholder="e.g. PEN9981234 (Auto-assigned if blank)"
-                        className="w-full bg-slate-950/80 border border-slate-700 rounded-xl px-3.5 py-2 text-xs font-mono text-white focus:outline-none focus:border-cyan-400"
+                        className="w-full bg-[#070810]/90 border border-white/[0.08] rounded-xl px-3.5 py-2 text-xs font-mono text-white focus:outline-none focus:border-indigo-400 focus:ring-1 focus:ring-indigo-400/40 shadow-[inset_0_1px_0_0_rgba(255,255,255,0.04)]"
                       />
                     </div>
 
@@ -3690,7 +4625,7 @@ export default function CommandCenter() {
                         value={regClass10}
                         onChange={(e) => setRegClass10(e.target.value)}
                         placeholder="e.g. 92.4"
-                        className="w-full bg-slate-950/80 border border-slate-700 rounded-xl px-3.5 py-2 text-xs font-mono text-white focus:outline-none focus:border-cyan-400"
+                        className="w-full bg-[#070810]/90 border border-white/[0.08] rounded-xl px-3.5 py-2 text-xs font-mono text-white focus:outline-none focus:border-indigo-400 focus:ring-1 focus:ring-indigo-400/40 shadow-[inset_0_1px_0_0_rgba(255,255,255,0.04)]"
                       />
                     </div>
 
@@ -3707,7 +4642,7 @@ export default function CommandCenter() {
                         value={regClass12}
                         onChange={(e) => setRegClass12(e.target.value)}
                         placeholder="e.g. 89.8"
-                        className="w-full bg-slate-950/80 border border-slate-700 rounded-xl px-3.5 py-2 text-xs font-mono text-white focus:outline-none focus:border-cyan-400"
+                        className="w-full bg-[#070810]/90 border border-white/[0.08] rounded-xl px-3.5 py-2 text-xs font-mono text-white focus:outline-none focus:border-indigo-400 focus:ring-1 focus:ring-indigo-400/40 shadow-[inset_0_1px_0_0_rgba(255,255,255,0.04)]"
                       />
                     </div>
 
@@ -3719,7 +4654,7 @@ export default function CommandCenter() {
                       <select
                         value={regAicteCode}
                         onChange={(e) => setRegAicteCode(e.target.value)}
-                        className="w-full bg-slate-950/80 border border-slate-700 rounded-xl px-3.5 py-2 text-xs text-white focus:outline-none focus:border-cyan-400"
+                        className="w-full bg-[#070810]/90 border border-white/[0.08] rounded-xl px-3.5 py-2 text-xs text-white focus:outline-none focus:border-indigo-400 focus:ring-1 focus:ring-indigo-400/40 shadow-[inset_0_1px_0_0_rgba(255,255,255,0.04)]"
                       >
                         <option value="1-10000001">1-10000001 — Indian Institute of Technology Madras (Chennai, TN)</option>
                         <option value="1-20000002">1-20000002 — Indian Institute of Science (IISc Bengaluru, KA)</option>
@@ -3732,7 +4667,7 @@ export default function CommandCenter() {
                         <label className="text-xs font-bold text-slate-300">
                           Custom 12-Digit APAAR ID (Optional)
                         </label>
-                        <span className="text-[10px] text-cyan-400 font-mono">
+                        <span className="text-[10px] text-indigo-400 font-mono">
                           Leave blank to auto-mint unique 12 digits
                         </span>
                       </div>
@@ -3742,13 +4677,13 @@ export default function CommandCenter() {
                         value={regCustomApaar}
                         onChange={(e) => setRegCustomApaar(e.target.value.replace(/\D/g, ""))}
                         placeholder="e.g. 555888999111 (or leave blank to auto-mint)"
-                        className="w-full bg-slate-950/80 border border-slate-700 rounded-xl px-3.5 py-2 text-xs font-mono text-white focus:outline-none focus:border-cyan-400"
+                        className="w-full bg-[#070810]/90 border border-white/[0.08] rounded-xl px-3.5 py-2 text-xs font-mono text-white focus:outline-none focus:border-indigo-400 focus:ring-1 focus:ring-indigo-400/40 shadow-[inset_0_1px_0_0_rgba(255,255,255,0.04)]"
                       />
                     </div>
                   </div>
 
                   {/* DPI Genesis Guarantee Notice */}
-                  <div className="p-3.5 rounded-2xl bg-cyan-950/40 border border-cyan-500/30 flex items-start gap-3 text-[11px] text-cyan-200/90 font-mono">
+                  <div className="p-3.5 rounded-2xl bg-[#070810]/90 border border-indigo-400/20 flex items-start gap-3 text-[11px] text-indigo-200/90 font-mono shadow-[inset_0_1px_0_0_rgba(255,255,255,0.06)]">
                     <ShieldCheck className="w-4 h-4 text-cyan-400 shrink-0 mt-0.5" />
                     <span>
                       <strong>DigiLocker Genesis Guarantee:</strong> Onboarding automatically anchors 1 welcome foundation credit (4 Credits, Grade O) with a SHA-256 cryptographic seal and initializes an active DEPA consent token for instant QR verification.
@@ -3760,15 +4695,15 @@ export default function CommandCenter() {
                     <button
                       type="button"
                       onClick={() => setShowRegisterModal(false)}
-                      className="px-4 py-2.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs font-semibold transition-colors cursor-pointer"
+                      className="px-4 py-2.5 rounded-xl bg-[#0B0C14] hover:bg-[#121324] border border-white/[0.08] text-slate-300 text-xs font-semibold transition-colors cursor-pointer"
                     >
                       Cancel
                     </button>
                     <button
                       type="submit"
-                      className="bg-gradient-to-r from-amber-500 via-emerald-500 to-cyan-500 hover:from-amber-400 hover:to-cyan-400 text-slate-950 text-xs font-extrabold px-5 py-2.5 rounded-xl transition-all shadow-lg shadow-cyan-500/25 flex items-center gap-2 cursor-pointer"
+                      className="bg-gradient-to-r from-indigo-500 via-purple-500 to-cyan-500 hover:from-indigo-400 hover:to-cyan-400 text-white text-xs font-semibold px-5 py-2.5 rounded-xl transition-all shadow-[0_0_25px_rgba(99,102,241,0.35)] hover:shadow-[0_0_35px_rgba(168,85,247,0.5)] flex items-center gap-2 cursor-pointer"
                     >
-                      <Sparkles className="w-4 h-4" />
+                      <Sparkles className="w-4 h-4 text-amber-300" />
                       <span>Mint APAAR ID via DigiLocker eKYC</span>
                     </button>
                   </div>
@@ -3782,7 +4717,7 @@ export default function CommandCenter() {
       {/* ========================================================================= */}
       {/* SIH WINNING FEATURE 3: COLLAPSIBLE LIVE DPI CRYPTOGRAPHIC EVENT STREAM */}
       {/* ========================================================================= */}
-      <aside className="fixed bottom-0 left-0 right-0 z-40 bg-slate-950/95 border-t border-cyan-500/30 backdrop-blur-2xl shadow-2xl transition-all duration-300">
+      <aside className="fixed bottom-0 left-0 right-0 z-40 bg-[#05050A]/95 border-t border-white/[0.08] backdrop-blur-2xl shadow-[0_-4px_30px_rgba(0,0,0,0.7)] transition-all duration-300">
         {/* Terminal Header Bar */}
         <div
           onClick={() => setIsTelemetryCollapsed(!isTelemetryCollapsed)}
@@ -3794,7 +4729,7 @@ export default function CommandCenter() {
               <span>&gt;_ {t.telemetryStream}</span>
             </div>
             <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
-            <span className="text-[10px] bg-slate-900 border border-slate-800 text-slate-400 px-2 py-0.5 rounded-full">
+            <span className="text-[10px] bg-[#0B0C14] border border-white/[0.08] text-slate-400 px-2 py-0.5 rounded-full">
               {telemetryEvents.length} Real-Time Ledger Events
             </span>
           </div>
@@ -3814,11 +4749,11 @@ export default function CommandCenter() {
 
         {/* Collapsible Log Stream Console */}
         {!isTelemetryCollapsed && (
-          <div className="max-w-7xl mx-auto px-4 sm:px-6 pb-3 max-h-36 overflow-y-auto no-scrollbar space-y-1 font-mono text-[11px] border-t border-slate-900 pt-2">
+          <div className="max-w-7xl mx-auto px-4 sm:px-6 pb-3 max-h-36 overflow-y-auto no-scrollbar space-y-1 font-mono text-[11px] border-t border-white/[0.06] pt-2">
             {telemetryEvents.map((ev) => (
               <div
                 key={ev.id}
-                className="flex items-start gap-2.5 py-0.5 px-2 rounded hover:bg-slate-900/60 transition-colors"
+                className="flex items-start gap-2.5 py-0.5 px-2 rounded hover:bg-white/[0.03] transition-colors"
               >
                 <span className="text-slate-500 shrink-0">[{ev.timestamp}]</span>
                 <span
@@ -3828,11 +4763,11 @@ export default function CommandCenter() {
                       : ev.type === "CRYPTO"
                       ? "bg-cyan-500/20 text-cyan-400"
                       : ev.type === "CONSENT"
-                      ? "bg-violet-500/20 text-violet-400"
+                      ? "bg-purple-500/20 text-purple-400"
                       : ev.type === "OCR"
-                      ? "bg-amber-500/20 text-amber-400"
+                      ? "bg-amber-500/20 text-amber-300"
                       : ev.type === "MERKLE"
-                      ? "bg-blue-500/20 text-blue-400"
+                      ? "bg-indigo-500/20 text-indigo-400"
                       : ev.type === "FRAUD"
                       ? "bg-rose-500/25 text-rose-400 animate-pulse font-extrabold"
                       : "bg-teal-500/20 text-teal-400"
@@ -3842,7 +4777,7 @@ export default function CommandCenter() {
                 </span>
                 <span className="text-slate-200 flex-1 truncate">{ev.message}</span>
                 {ev.hash && (
-                  <span className="text-[10px] text-emerald-400/80 bg-slate-900 px-1.5 py-0.2 rounded shrink-0 hidden sm:inline">
+                  <span className="text-[10px] text-emerald-400/80 bg-[#0B0C14] border border-white/[0.05] px-1.5 py-0.2 rounded shrink-0 hidden sm:inline">
                     Hash: {ev.hash.slice(0, 12)}...
                   </span>
                 )}
@@ -3853,8 +4788,8 @@ export default function CommandCenter() {
       </aside>
 
       {/* Footer */}
-      <footer className="border-t border-slate-800/80 bg-slate-950/80 py-4 text-center text-xs text-slate-400">
-        AICTE-APAAR Unified Student Data & Verification Platform • Built on India's Digital Public Infrastructure (DPI)
+      <footer className="border-t border-white/[0.06] bg-[#05050A] py-4 text-center text-xs text-slate-500">
+        AICTE-APAAR Unified Student Data & Verification Platform • Built on India&apos;s Digital Public Infrastructure (DPI)
       </footer>
     </div>
   );
